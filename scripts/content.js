@@ -1,32 +1,73 @@
-function addButton(fileDropDown) {
+async function handleClick(event) {
+  console.log("Preview on Learn button clicked!");
+
+  const menuItem = event.currentTarget;
+
+  const [originalFileName, newFileName = originalFileName] = menuItem
+    .closest('[data-path]')
+    .querySelector(".Link--primary")
+    .textContent
+    .split(" → ");
+
+  console.log(`File name is ${newFileName}.`);
+
+  if (newFileName.endsWith('.md')) {
+    const repoInfo = extractRepoInfo();
+    // Remove the last 3 characters (.md).
+    const fileNameSansExtension = newFileName.substring(0, newFileName.length - 3);
+    const learnUrl = generateLearnPreviewUrl(fileNameSansExtension, repoInfo.prNumber);
+    window.open(learnUrl, '_blank');
+  }
+}
+
+// Extract repository information from the URL.
+function extractRepoInfo() {
+  const pathParts = window.location.pathname.split('/');
+  if (pathParts.length >= 4) {
+    return {
+      owner: pathParts[1],
+      repo: pathParts[2],
+      prNumber: pathParts[4]
+    };
+  }
+  return null;
+}
+
+// Generate Learn preview URL.
+function generateLearnPreviewUrl(filePath, prNumber) {
+  const baseUrl = 'https://review.learn.microsoft.com';
+  return `${baseUrl}/${filePath.replace('docs', 'dotnet')}?branch=pr-en-us-${prNumber}`;
+}
+
+function addButton(fileMenu) {
   // Check if this menu already has our custom button.
-  if (fileDropDown.querySelector('.preview-on-learn')) {
+  if (fileMenu.querySelector('.preview-on-learn')) {
     return;
   }
 
-  // Add divider.
+  // Create and add divider.
   let divider = document.createElement("div");
   divider.className = "dropdown-divider";
   divider.setAttribute("role", "separator");
-  fileDropDown.appendChild(divider);
+  fileMenu.appendChild(divider);
 
-  let previewButton = document.createElement("button");
+  // Create new button.
+  let menuItem = document.createElement("button");
 
   // Set attributes and properties.
-  previewButton.className = "pl-5 dropdown-item btn-link preview-on-learn";
-  previewButton.setAttribute("role", "menuitem");
-  previewButton.setAttribute("type", "button");
-  previewButton.textContent = "Preview on Learn";
+  menuItem.className = "pl-5 dropdown-item btn-link preview-on-learn";
+  menuItem.setAttribute("role", "menuitem");
+  menuItem.setAttribute("type", "button");
+  menuItem.textContent = "Preview on Learn";
 
   // Add event listener.
-  previewButton.addEventListener("click", function () {
-    console.log("Preview on Learn button clicked!");
-  });
+  menuItem.addEventListener('click', handleClick, { capture: true });
 
-  fileDropDown.appendChild(previewButton);
+  // Add new button to menu.
+  fileMenu.appendChild(menuItem);
 }
 
-// Function to add buttons to all matching dropdown menus.
+// Adds buttons to all matching dropdown menus.
 function addButtonsToDropdowns() {
   const dropdownMenus = document.querySelectorAll(".js-file-header-dropdown .dropdown-menu");
   dropdownMenus.forEach(menu => {
@@ -37,7 +78,7 @@ function addButtonsToDropdowns() {
 // Initial addition of buttons.
 addButtonsToDropdowns();
 
-// Set up a MutationObserver to watch for DOM changes.
+// Set up observer to watch for DOM changes.
 const observer = new MutationObserver((mutations) => {
   mutations.forEach((mutation) => {
     // If new nodes are added...
@@ -53,7 +94,7 @@ const observer = new MutationObserver((mutations) => {
   });
 });
 
-// Start observing the document with the configured parameters
+// Start observing the document.
 observer.observe(document.body, {
   childList: true,     // Watch for changes to the direct children.
   subtree: true,       // Watch for changes in the entire subtree.
