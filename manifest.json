@@ -3,13 +3,21 @@
   "name": "Preview on Learn",
   "version": "1.0.0",
   "description": "Add 'Preview on Learn' option to GitHub pull request file kebab menus",
+  "permissions": [
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://api.github.com/*",
+    "https://github.com/*",
+    "https://review.learn.microsoft.com/*"
+  ],
   "icons": {
     "128": "images/icon128.png"
   },
   "content_scripts": [
     {
       "js": [
-        "scripts/content.js"
+        "dist/content.bundle.js"
       ],
       "matches": [
         "https://github.com/*/*/pull/*/files"
