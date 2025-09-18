@@ -38,8 +38,6 @@ export async function getLatestPrCommit(owner, repo, prNumber) {
             if (error.message && error.message.includes('SAML')) {
                 console.log("403 Forbidden error - SAML SSO authorization required:", error.message);
                 console.log("You need to authorize your Personal Access Token for this organization. Go to https://github.com/settings/tokens, find your token, click 'Configure SSO', and authorize it for the organization.");
-            } else {
-                console.log("403 Forbidden error - your token doesn't have access to this repository or the PR doesn't exist");
             }
             // Log more details about the error for debugging.
             console.log("Error details:", {
