@@ -357,20 +357,19 @@ function addButton(showCommentsMenuItem, isDisabled = false, disabledReason = ""
     menuItem.setAttribute("type", "button");
     menuItem.textContent = "Preview on Learn";
 
-    // If disabled, add appropriate styling and attributes
+    // If disabled, add appropriate styling and attributes.
     if (isDisabled) {
       menuItem.classList.add("disabled");
-      menuItem.style.opacity = "0.6";
       menuItem.style.cursor = "not-allowed";
       menuItem.disabled = true;
 
-      // Add tooltip with reason
+      // Add tooltip with reason.
       if (disabledReason) {
-        menuItem.setAttribute("title", disabledReason);
-        menuItem.setAttribute("aria-label", disabledReason);
+        menuItem.title = disabledReason;
+        menuItem.ariaLabel = disabledReason;
       }
     } else {
-      // Add event listener only if not disabled
+      // Add event listener only if not disabled.
       menuItem.addEventListener('click', handleClick, { capture: true });
     }
 
