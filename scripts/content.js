@@ -117,9 +117,70 @@ function addButton(showCommentsMenuItem) {
     menuItem.setAttribute("role", "menuitem");
     menuItem.setAttribute("type", "button");
     menuItem.textContent = "Preview on Learn";
+    // Disable button by default
+    menuItem.disabled = true;
+    menuItem.style.pointerEvents = 'none';
+    menuItem.style.opacity = '0.5';
 
-    // Add event listener.
-    menuItem.addEventListener('click', handleClick, { capture: true });
+    // Run checks to enable button if allowed
+    (async () => {
+      // Extract file name using the same logic as handleClick
+      let newFileName = null;
+      const dataPathElem = showCommentsMenuItem.closest('[data-path]');
+      if (dataPathElem) {
+        const link = dataPathElem.querySelector('.Link--primary');
+        if (link) {
+          const split = link.textContent.split(' → ');
+          newFileName = split.length > 1 ? split[1] : split[0];
+        }
+      }
+      const repoInfo = extractRepoInfo();
+      if (!repoInfo) return;
+      try {
+        // Get the latest commit SHA.
+        const commitSha = await getLatestPrCommit(
+          repoInfo.owner,
+          repoInfo.repo,
+          repoInfo.prNumber
+        );
+        if (!commitSha) return;
+        // Get the OPS status check.
+        const opsCheck = await getSpecificStatusCheck(
+          repoInfo.owner,
+          repoInfo.repo,
+          commitSha,
+          "OpenPublishing.Build"
+        );
+        if (!opsCheck || !opsCheck.details_url) return;
+        console.log('[Preview on Learn] opsCheck value:', opsCheck);
+        if (opsCheck.status !== 'success') return;
+        // Fetch and parse the build report.
+        const buildReportDoc = await fetchBuildReport(opsCheck.details_url);
+        if (!buildReportDoc) return;
+        const previewLinks = extractPreviewLinks(buildReportDoc);
+        if (!previewLinks || Object.keys(previewLinks).length === 0) return;
+        let previewUrl = null;
+        if (previewLinks[newFileName]) {
+          previewUrl = previewLinks[newFileName];
+        }
+        if (previewUrl) {
+          // Enable button and store previewUrl
+          menuItem.disabled = false;
+          menuItem.style.pointerEvents = '';
+          menuItem.style.opacity = '';
+          menuItem.dataset.previewUrl = previewUrl;
+          menuItem.addEventListener('click', function() {
+            window.open(menuItem.dataset.previewUrl, '_blank');
+          }, { capture: true });
+        } else {
+          // Remain disabled
+          return;
+        }
+      } catch (error) {
+        // Remain disabled
+        return;
+      }
+    })();
 
     // Add new button to menu below divider.
     divider.after(menuItem);
