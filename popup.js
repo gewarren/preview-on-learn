@@ -6,20 +6,20 @@ document.addEventListener('DOMContentLoaded', async function () {
     const clearTokenButton = document.getElementById('clear-token');
     const statusElement = document.getElementById('status');
 
-    // Check if a token is already saved
+    // Check if a token is already saved.
     try {
         const result = await chrome.storage.sync.get(['githubToken']);
         if (result.githubToken) {
-            // Token exists - show the token status and hide the form
+            // Token exists - show the token status and hide the form.
             tokenStatusElement.style.display = 'flex';
             tokenFormElement.style.display = 'none';
-            // Don't show the token value for security
+            // Don't show the token value for security.
             tokenInput.value = '';
 
-            // Check SAML authorization status for the token
+            // Check SAML authorization status for the token.
             checkSamlAuthorization();
         } else {
-            // No token - show the form and hide the token status
+            // No token - show the form and hide the token status.
             tokenStatusElement.style.display = 'none';
             tokenFormElement.style.display = 'block';
         }
@@ -28,7 +28,7 @@ document.addEventListener('DOMContentLoaded', async function () {
         showStatus("Error loading token: " + error.message, "error");
     }
 
-    // Save token when button is clicked
+    // Save token when button is clicked.
     saveTokenButton.addEventListener('click', async function () {
         const token = tokenInput.value.trim();
 
@@ -42,12 +42,12 @@ document.addEventListener('DOMContentLoaded', async function () {
 
             showStatus("Token saved successfully!", "success");
 
-            // Show the token status and hide the form
+            // Show the token status and hide the form.
             tokenStatusElement.style.display = 'flex';
             tokenFormElement.style.display = 'none';
             tokenInput.value = '';
 
-            // Send message to content script to refresh Octokit
+            // Send message to content script to refresh Octokit.
             chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
                 if (tabs[0] && tabs[0].id) {
                     chrome.tabs.sendMessage(tabs[0].id, { action: "refreshOctokit" });
@@ -58,19 +58,19 @@ document.addEventListener('DOMContentLoaded', async function () {
         }
     });
 
-    // Clear token when button is clicked
+    // Clear token when button is clicked.
     clearTokenButton.addEventListener('click', async function () {
         try {
             await chrome.storage.sync.remove('githubToken');
 
-            // Hide the token status and show the form
+            // Hide the token status and show the form.
             tokenStatusElement.style.display = 'none';
             tokenFormElement.style.display = 'block';
             tokenInput.value = '';
 
             showStatus("Token removed successfully!", "success");
 
-            // Send message to content script to refresh Octokit
+            // Send message to content script to refresh Octokit.
             chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
                 if (tabs[0] && tabs[0].id) {
                     chrome.tabs.sendMessage(tabs[0].id, { action: "refreshOctokit" });
@@ -81,19 +81,19 @@ document.addEventListener('DOMContentLoaded', async function () {
         }
     });
 
-    // Helper function to show status messages
+    // Helper function to show status messages.
     function showStatus(message, type) {
         statusElement.textContent = message;
         statusElement.className = "status " + type;
         statusElement.style.display = "block";
 
-        // Hide status after 3 seconds
+        // Hide status after 3 seconds.
         setTimeout(() => {
             statusElement.style.display = "none";
         }, 3000);
     }
 
-    // Check if token has SAML authorization
+    // Check if token has SAML authorization.
     function checkSamlAuthorization() {
         chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
             if (tabs[0] && tabs[0].id) {

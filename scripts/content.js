@@ -138,10 +138,10 @@ async function addMenuItems() {
     const isOps = await isOpsRepo();
 
     if (isOps) {
-      // Add "Preview on Learn" menu item after "Show comments" menu item.
-      const showCommentsItems = document.querySelectorAll('.js-file-header-dropdown label[role="menuitemradio"]');
+      // Add "Preview on Learn" menu item after "Delete file" menu item.
+      const showCommentsItems = document.querySelectorAll('.js-file-header-dropdown a[aria-label="Delete this file"], .js-file-header-dropdown button[aria-label="You must be signed in and have push access to delete this file."]');
       showCommentsItems.forEach(menuItem => {
-          addButton(menuItem);
+        addButton(menuItem);
       });
 
     } else {
@@ -158,8 +158,77 @@ function isPrFilesPage() {
   return path.includes('/pull/') && path.includes('/files');
 }
 
-if (isPrFilesPage()) {
-  initializeOctokit();
-  addMenuItems();
+// Set up observers to watch for DOM changes.
+function setUpObservers() {
+  console.log('Setting up mutation observers');
+
+  // Observer for file header dropdown additions.
+  const fileObserver = new MutationObserver(mutations => {
+    for (const mutation of mutations) {
+      // Only interested in added nodes.
+      if (mutation.type !== 'childList' || mutation.addedNodes.length === 0) {
+        continue;
+      }
+
+      // Check each added node.
+      for (const node of mutation.addedNodes) {
+        if (!(node instanceof HTMLElement)) {
+          continue;
+        }
+
+        // Check if a dropdown menu was added.
+        const dropdowns = node.classList?.contains('js-file-header-dropdown')
+          ? [node]
+          : [...node.querySelectorAll('.js-file-header-dropdown')];
+
+        if (dropdowns.length > 0) {
+          console.log('Detected new file dropdown(s):', dropdowns.length);
+
+          // Find menu items in each dropdown that we want to add our button after.
+          for (const dropdown of dropdowns) {
+            const menuItems = dropdown.querySelectorAll('a[aria-label="Delete this file"], button[aria-label="You must be signed in and have push access to delete this file."]');
+            if (menuItems.length > 0) {
+              console.log('Found menu items to modify');
+              menuItems.forEach(item => {
+                // Check if we've already added our button to this menu.
+                const previewButton = dropdown.querySelector('.preview-on-learn');
+                if (!previewButton) {
+                  addButton(item);
+                }
+              });
+            }
+          }
+        }
+      }
+    }
+  });
+
+  // Start observing the whole document for file changes.
+  fileObserver.observe(document.body, {
+    childList: true,
+    subtree: true
+  });
+
+  return fileObserver;
 }
+
+async function init() {
+  // Initialize when page loads.
+  console.log('Initializing extension');
+
+  // Set up observers for dynamic changes.
+  initializeOctokit();
+  const observer = setUpObservers();
+
+  if (isPrFilesPage()) {
+    addMenuItems();
+  }
+
+  // Clean up when navigating away.
+  window.addEventListener('beforeunload', () => {
+    observer.disconnect();
+  });
+}
+
+init();
 

@@ -15,26 +15,25 @@ export function extractRepoInfo() {
 // Gets the latest commit SHA of the PR.
 export async function getLatestPrCommit(owner, repo, prNumber) {
     try {
-        console.log(`Attempting to get commits for PR #${prNumber} in ${owner}/${repo}`);
+        console.log(`Attempting to get latest commit for PR #${prNumber} in ${owner}/${repo}`);
 
-        // Get list of commits in the PR.
-        const { data: commits } = await octokit.pulls.listCommits({
+        // Get the PR details, which includes the latest commit SHA.
+        const { data: pullRequest } = await octokit.pulls.get({
             owner,
             repo,
             pull_number: prNumber
         });
 
-        if (commits && commits.length > 0) {
-            // The last commit in the array is the latest one.
-            const latestCommit = commits[commits.length - 1];
-            console.log(`Latest commit SHA: ${latestCommit.sha}`);
-            return latestCommit.sha;
+        if (pullRequest && pullRequest.head && pullRequest.head.sha) {
+            const latestCommitSha = pullRequest.head.sha;
+            console.log(`Latest commit SHA: ${latestCommitSha}`);
+            return latestCommitSha;
         } else {
-            console.warn('No commits found in this PR');
+            console.warn('Could not find commit SHA in PR data');
             return null;
         }
     } catch (error) {
-        console.error(`Error fetching PR commits:`, error);
+        console.error(`Error fetching PR data:`, error);
         if (error.status === 403) {
             if (error.message && error.message.includes('SAML')) {
                 console.log("403 Forbidden error - SAML SSO authorization required:", error.message);
