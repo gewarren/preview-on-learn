@@ -3,7 +3,23 @@ import { initializeOctokit } from './octokit.js';
 import { extractRepoInfo, getLatestPrCommit, getSpecificStatusCheck } from './pr-helpers.js';
 import { fetchBuildReport } from './build-report.js';
 import { extractPreviewLinks } from './build-report.js';
-import { setUpObservers, setUpNavigationListeners } from './observers.js';
+import { setUpObservers, setUpNavigationListeners, setUpTokenObserver } from './observers.js';
+import { hasGitHubToken } from './auth.js';
+
+const INVALID_TOKEN_MESSAGE = "You haven't entered a GitHub token or the token you entered is invalid. Go to Extensions > Preview on Learn and enter a valid PAT. The PAT should have 'repo' scope and be configured for SSO."
+
+// Helper function to remove all existing Preview on Learn buttons
+function removeAllButtons() {
+  const existingButtons = document.querySelectorAll('.preview-on-learn');
+  existingButtons.forEach(button => {
+    const divider = button.previousElementSibling;
+    if (divider && divider.classList.contains('dropdown-divider')) {
+      divider.remove();
+    }
+    button.remove();
+  });
+  console.log(`Removed ${existingButtons.length} existing buttons`);
+}
 
 // Shared state for button conditions.
 const sharedButtonState = {
@@ -15,8 +31,16 @@ const sharedButtonState = {
 };
 
 // Checks and updates shared button state.
-// This function should only be called on non-OPS repos.
+// This function should only be called on OPS repos.
 async function checkSharedButtonState() {
+  // Check if user has a GitHub token first
+  const hasToken = await hasGitHubToken();
+  if (!hasToken) {
+    sharedButtonState.isDisabled = true;
+    sharedButtonState.disabledReason = INVALID_TOKEN_MESSAGE;
+    return sharedButtonState;
+  }
+
   // Only check once every 15 seconds to avoid too many API calls.
   const now = Date.now();
   if (now - sharedButtonState.lastCheckTime < 15000) {
@@ -138,15 +162,14 @@ async function checkSharedButtonState() {
 }
 
 // Updates an single button's state.
-// This is called from the interval observer
-// and the mutation observer.
+// This is called from the interval observer and the mutation observer.
 async function updateButtonState(button, state) {
   console.log(`Updating button. Current disabled state is ${state.isDisabled}`);
 
   const isDisabled = state.isDisabled;
   const disabledReason = state.disabledReason;
 
-  // Check current state
+  // Check current state.
   const currentlyDisabled = button.disabled || button.classList.contains('disabled');
 
   // Update the button only if the state has changed.
@@ -367,6 +390,13 @@ async function getPreviewUrl(fileName) {
 
 function addButton(showCommentsMenuItem, isDisabled = false, disabledReason = "") {
   try {
+    // Check if a button already exists in this dropdown
+    const dropdown = showCommentsMenuItem.closest('.js-file-header-dropdown');
+    if (dropdown && dropdown.querySelector('.preview-on-learn')) {
+      console.log('Preview button already exists in this dropdown, skipping');
+      return;
+    }
+
     // Create and add divider.
     let divider = document.createElement("div");
     divider.className = "dropdown-divider";
@@ -434,6 +464,9 @@ async function addInitialMenuItems() {
       return;
     }
 
+    // Remove any existing buttons first to prevent duplicates
+    removeAllButtons();
+
     // Check shared button state.
     const state = await checkSharedButtonState();
 
@@ -455,7 +488,60 @@ function isPrFilesPage() {
 }
 
 async function init() {
-  // Initialize Octokit first
+  // Check if user has a GitHub token.
+  const hasToken = await hasGitHubToken();
+
+  if (!hasToken) {
+    console.log("No GitHub token found, setting up token observer only");
+
+    // Only set up token observer to wait for token to be entered.
+    const cleanupTokenObserver = setUpTokenObserver(
+      async () => {
+        console.log("GitHub token detected, reinitializing extension");
+        // Token was added, reinitialize the extension.
+        await initializeOctokit();
+
+        // Clean up the token-only observer.
+        cleanupTokenObserver();
+
+        // Remove existing disabled buttons.
+        removeAllButtons();
+
+        await fullInit();
+      },
+      async () => {
+        // Token removal shouldn't happen when we're in no-token mode, but handle it gracefully.
+        console.log("Token was removed while in no-token mode");
+      }
+    );
+
+    // Add disabled buttons if we're on a PR files page and it's an OPS repo.
+    if (isPrFilesPage()) {
+      const isOps = await isOpsRepo();
+      if (isOps) {
+        // Add disabled buttons with token message.
+        const cssSelector = '.js-file-header-dropdown a[aria-label="Delete this file"], .js-file-header-dropdown button[aria-label="You must be signed in and have push access to delete this file."]';
+        const deleteFileItems = document.querySelectorAll(cssSelector);
+        deleteFileItems.forEach(item => {
+          addButton(item, true, INVALID_TOKEN_MESSAGE);
+        });
+      }
+    }
+
+    // Clean up when navigating away.
+    window.addEventListener('beforeunload', () => {
+      cleanupTokenObserver();
+    });
+
+    return;
+  }
+
+  // User has token, set up full functionality.
+  await fullInit();
+}
+
+async function fullInit() {
+  // Initialize Octokit.
   await initializeOctokit();
 
   const observers = setUpObservers(updateAllButtons, checkSharedButtonState, addButton, updateButtonState);
@@ -469,11 +555,42 @@ async function init() {
     isDifferentRepo();
   });
 
+  // Set up token observer to handle token removal
+  const cleanupTokenObserver = setUpTokenObserver(
+    async () => {
+      // Token was added (shouldn't happen in fullInit, but handle it)
+      console.log("Token was added while extension was running");
+    },
+    async () => {
+      // Token was removed - go back to initial state
+      console.log("GitHub token was removed, reverting to initial state");
+
+      // Clean up current observers
+      observers.fileObserver.disconnect();
+      clearInterval(observers.commitCheckInterval);
+      cleanupNavigation();
+
+      // Remove all existing buttons
+      removeAllButtons();
+
+      // Clear shared state
+      sharedButtonState.latestCommitSha = null;
+      sharedButtonState.lastBuildStatus = null;
+      sharedButtonState.isDisabled = false;
+      sharedButtonState.disabledReason = "";
+      sharedButtonState.lastCheckTime = 0;
+
+      // Reinitialize in no-token mode
+      await init();
+    }
+  );
+
   // Clean up when navigating away.
   window.addEventListener('beforeunload', () => {
     observers.fileObserver.disconnect();
     clearInterval(observers.commitCheckInterval);
     cleanupNavigation();
+    cleanupTokenObserver();
   });
 }
 

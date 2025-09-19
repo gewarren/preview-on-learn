@@ -149,3 +149,30 @@ export function setUpNavigationListeners(onNavigationChange) {
         history.replaceState = originalReplaceState;
     };
 }
+
+// Set up observer to watch for GitHub token being added or removed
+export function setUpTokenObserver(onTokenAdded, onTokenRemoved) {
+    console.log('Setting up token observer');
+
+    // Listen for changes to Chrome storage
+    const tokenListener = (changes, namespace) => {
+        if (namespace === 'sync' && changes.githubToken) {
+            // Token was added (from no token to having a token)
+            if (changes.githubToken.newValue && !changes.githubToken.oldValue) {
+                console.log('GitHub token was added');
+                onTokenAdded();
+            }
+            // Token was removed (from having a token to no token).
+            else if (!changes.githubToken.newValue && changes.githubToken.oldValue) {
+                onTokenRemoved();
+            }
+        }
+    };
+
+    chrome.storage.onChanged.addListener(tokenListener);
+
+    // Return cleanup function
+    return function cleanup() {
+        chrome.storage.onChanged.removeListener(tokenListener);
+    };
+}

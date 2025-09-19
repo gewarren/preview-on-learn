@@ -15,9 +15,6 @@ document.addEventListener('DOMContentLoaded', async function () {
             tokenFormElement.style.display = 'none';
             // Don't show the token value for security.
             tokenInput.value = '';
-
-            // Check SAML authorization status for the token.
-            checkSamlAuthorization();
         } else {
             // No token - show the form and hide the token status.
             tokenStatusElement.style.display = 'none';
@@ -90,25 +87,6 @@ document.addEventListener('DOMContentLoaded', async function () {
         // Hide status after 3 seconds.
         setTimeout(() => {
             statusElement.style.display = "none";
-        }, 3000);
-    }
-
-    // Check if token has SAML authorization.
-    function checkSamlAuthorization() {
-        chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
-            if (tabs[0] && tabs[0].id) {
-                chrome.tabs.sendMessage(
-                    tabs[0].id,
-                    { action: "checkSamlStatus" },
-                    function (response) {
-                        if (response && response.samlStatus && !response.samlStatus.authorized) {
-                            if (response.samlStatus.reason === "SAML SSO authorization required") {
-                                showStatus("Your token needs SAML authorization. Please click 'Configure SSO' on your token in GitHub settings.", "error");
-                            }
-                        }
-                    }
-                );
-            }
-        });
+        }, 4000);
     }
 });

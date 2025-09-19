@@ -33,13 +33,24 @@ export async function getLatestPrCommit(owner, repo, prNumber) {
             return null;
         }
     } catch (error) {
-        console.error(`Error fetching PR data:`, error);
-        if (error.status === 403) {
+        console.error(`Error fetching PR data. Error status: ${error.status}`);
+        if (error.status === 401) {
+            if (error.message && error.message.includes('Bad credentials')) {
+                console.error("The PAT you entered is valid. Enter a valid PAT.");
+
+                // Clear the invalid token from storage.
+                try {
+                    await chrome.storage.sync.remove(['githubToken']);
+                    console.log("Invalid GitHub token has been cleared from storage");
+                } catch (storageError) {
+                    console.error("Error clearing invalid token from storage:", storageError);
+                }
+            }
+        }
+        else if (error.status === 403) {
             if (error.message && error.message.includes('SAML')) {
                 console.log("403 Forbidden error - SAML SSO authorization required:", error.message);
                 console.log("You need to authorize your Personal Access Token for this organization. Go to https://github.com/settings/tokens, find your token, click 'Configure SSO', and authorize it for the organization.");
-            } else {
-                console.log("403 Forbidden error - your token doesn't have access to this repository or the PR doesn't exist");
             }
             // Log more details about the error for debugging.
             console.log("Error details:", {
@@ -48,17 +59,8 @@ export async function getLatestPrCommit(owner, repo, prNumber) {
                 headers: error.headers,
                 request: error.request
             });
-        } else if (error.status === 404) {
-            console.log("404 Not Found error - the PR or repository doesn't exist or is private");
-
-            // Check if this might be due to not having a token for a private repo.
-            chrome.storage.sync.get(['githubToken'], function (result) {
-                if (!result.githubToken) {
-                    console.log("No GitHub token found - this could be why you can't access the repo.");
-                    showNoTokenNotification();
-                }
-            });
         }
+
         return null;
     }
 }

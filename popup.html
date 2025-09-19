@@ -29,7 +29,7 @@
         }
 
         button {
-            background-color: #2ea44f;
+            background-color: #1c34ab;
             color: white;
             border: none;
             padding: 8px 12px;
@@ -38,7 +38,7 @@
         }
 
         button:hover {
-            background-color: #2c974b;
+            background-color: #1c34ab;
         }
 
         .status {
@@ -87,23 +87,17 @@
 </head>
 
 <body>
-    <h2>GitHub Authentication</h2>
-    <p>A GitHub Personal Access Token is <strong>only needed for private repositories</strong>. The token needs the
-        <strong>repo</strong>
-        scope.</p>
-    <p class="info-text"><small>For organizations with SAML SSO, you must also <a
-                href="https://github.com/settings/tokens" target="_blank">authorize your token</a> for those
-            organizations.</small></p>
+    <h2>GitHub authentication</h2>
+    <p>This extension requires a GitHub personal access token (PAT). Querying GitHub with a PAT prevents rate limiting and enables the extension to get info from private repos. The token needs the <strong>repo</strong> scope and must also be <a href="https://github.com/settings/tokens" target="_blank">authorized for single sign-on (SSO)</a>.</p>
 
     <div id="token-status" class="token-status" style="display: none;">
-        <span class="token-indicator">✓ Token saved</span>
-        <button id="clear-token">Clear Token</button>
+        <button id="clear-token">Clear saved token</button>
     </div>
 
     <div id="token-form" class="form-group" style="display: block;">
-        <label for="github-token">GitHub Personal Access Token</label>
-        <input type="password" id="github-token" placeholder="ghp_xxxxxxxxxxxxxxxx">
-        <button id="save-token" style="margin-top: 10px;">Save Token</button>
+        <label for="github-token">GitHub personal access token</label>
+        <input type="password" id="github-token" placeholder="">
+        <button id="save-token" style="margin-top: 10px;">Save token</button>
     </div>
 
     <div id="status" class="status" style="display: none;"></div>
