@@ -1,31 +1,39 @@
 import { extractRepoInfo } from './pr-helpers.js';
 
-// Cache for OPS repo results, keyed by "owner/repo"
+// Cache for OPS repo results, keyed by "owner/repo".
 const opsRepoCache = new Map();
-
 // Flag to prevent concurrent checks.
 let isCheckingOpsRepo = false;
+let currentRepoKey = null;
 
-// Clears the cache for a specific repository or all repositories
-export function clearOpsRepoCache(owner = null, repo = null) {
-    if (owner && repo) {
-        const key = `${owner}/${repo}`.toLowerCase();
-        opsRepoCache.delete(key);
-        console.log(`Cleared OPS repo cache for ${key}`);
-    } else {
-        opsRepoCache.clear();
-        console.log("Cleared all OPS repo cache");
-    }
-}
-
-// Checks if it's an OPS repo.
-async function checkIfOpsRepo() {
-    if (isCheckingOpsRepo) {
-        return;
+// Checks if user navigated to a different repo.
+export function isDifferentRepo() {
+    const repoInfo = extractRepoInfo();
+    if (!repoInfo) {
+        return false;
     }
 
-    console.log("Checking if this is an OPS repo...");
-    await isOpsRepo();
+    const newRepoKey = `${repoInfo.owner}/${repoInfo.repo}`.toLowerCase();
+
+    if (currentRepoKey && currentRepoKey !== newRepoKey) {
+        console.log(`Repository changed from ${currentRepoKey} to ${newRepoKey}`);
+
+        // Clear button state for new repo.
+        buttonState.latestCommitSha = null;
+        buttonState.lastBuildStatus = null;
+        buttonState.isDisabled = false;
+        buttonState.disabledReason = "";
+        buttonState.lastCheckTime = 0;
+
+        currentRepoKey = newRepoKey;
+        return true;
+    } else if (!currentRepoKey) {
+        // First time setting the repo
+        currentRepoKey = newRepoKey;
+        console.log(`Initial repo set to ${currentRepoKey}`);
+    }
+
+    return false;
 }
 
 // Checks if the current repo is an OPS (docs) repo.
@@ -63,9 +71,8 @@ export async function isOpsRepo() {
             return true;
         }
 
-        // Try to check for the existence of the OPS config file with fetch.
+        // Check for the existence of the OPS config file with fetch.
         try {
-            // Use the raw GitHub content URL which might have different permissions.
             const rawUrl = `https://raw.githubusercontent.com/${repoInfo.owner}/${repoInfo.repo}/main/.openpublishing.publish.config.json`;
 
             const response = await fetch(rawUrl, {
@@ -113,6 +120,8 @@ function isKnownOpsRepo(owner, repo) {
     // List of known OPS repositories outside of MicrosoftDocs.
     const knownOpsRepos = [
         { owner: 'dotnet', repo: 'docs' },
+        { owner: 'dotnet', repo: 'docs-aspire' },
+        { owner: 'dotnet', repo: 'docs-desktop' },
         // ...
     ];
 

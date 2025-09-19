@@ -1,12 +1,12 @@
 import { Octokit } from "@octokit/rest";
 
-// Create a default instance that will be replaced when fully initialized
+// Create a default instance that will be replaced when fully initialized.
 let octokit = new Octokit();
 
-// Initialize Octokit, with auth if available
+// Initialize Octokit, with auth if available.
 export async function initializeOctokit() {
     try {
-        // Get token from Chrome storage
+        // Get token from Chrome storage.
         const result = await chrome.storage.sync.get(['githubToken']);
         const token = result.githubToken;
 
@@ -21,11 +21,11 @@ export async function initializeOctokit() {
         return octokit;
     } catch (error) {
         console.error("Error initializing Octokit:", error);
-        // Fall back to unauthenticated
+        // Fall back to unauthenticated.
         octokit = new Octokit();
         return octokit;
     }
 }
 
-// Export the octokit instance
+// Export the octokit instance.
 export { octokit };

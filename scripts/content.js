@@ -1,48 +1,12 @@
-import { isOpsRepo, clearOpsRepoCache } from './ops.js';
+import { isOpsRepo, isDifferentRepo } from './repo.js';
 import { initializeOctokit } from './octokit.js';
 import { extractRepoInfo, getLatestPrCommit, getSpecificStatusCheck } from './pr-helpers.js';
 import { fetchBuildReport } from './build-report.js';
 import { extractPreviewLinks } from './build-report.js';
+import { setUpObservers, setUpNavigationListeners } from './observers.js';
 
-// Track the current repository to detect navigation changes
-let currentRepoKey = null;
-
-// Function to check if we've navigated to a different repository
-function checkForRepositoryChange() {
-  const repoInfo = extractRepoInfo();
-  if (!repoInfo) {
-    return false;
-  }
-
-  const newRepoKey = `${repoInfo.owner}/${repoInfo.repo}`.toLowerCase();
-
-  if (currentRepoKey && currentRepoKey !== newRepoKey) {
-    console.log(`Repository changed from ${currentRepoKey} to ${newRepoKey}`);
-
-    // Clear the cache for the previous repository
-    const [prevOwner, prevRepo] = currentRepoKey.split('/');
-    clearOpsRepoCache(prevOwner, prevRepo);
-
-    // Clear button state for new repository
-    buttonState.latestCommitSha = null;
-    buttonState.lastBuildStatus = null;
-    buttonState.isDisabled = false;
-    buttonState.disabledReason = "";
-    buttonState.lastCheckTime = 0;
-
-    currentRepoKey = newRepoKey;
-    return true;
-  } else if (!currentRepoKey) {
-    // First time setting the repository
-    currentRepoKey = newRepoKey;
-    console.log(`Initial repository set to ${currentRepoKey}`);
-  }
-
-  return false;
-}
-
-// Shared state for button conditions
-const buttonState = {
+// Shared state for button conditions.
+const sharedButtonState = {
   latestCommitSha: null,
   lastBuildStatus: null,
   isDisabled: false,
@@ -50,40 +14,28 @@ const buttonState = {
   lastCheckTime: 0
 };
 
-// Function to check and update button state
-async function checkButtonState() {
-  // Check if we've navigated to a different repository
-  const repositoryChanged = checkForRepositoryChange();
-
-  // Only check once every 15 seconds to avoid too many API calls
+// Checks and updates shared button state.
+// This function should only be called on non-OPS repos.
+async function checkSharedButtonState() {
+  // Only check once every 15 seconds to avoid too many API calls.
   const now = Date.now();
-  if (!repositoryChanged && now - buttonState.lastCheckTime < 15000) {
-    return buttonState;
+  if (now - sharedButtonState.lastCheckTime < 15000) {
+    return sharedButtonState;
   }
 
-  buttonState.lastCheckTime = now;
+  sharedButtonState.lastCheckTime = now;
   console.log("Checking button state...");
 
   try {
-    // Check if this is an OPS repo.
-    const isOps = await isOpsRepo();
-
-    if (!isOps) {
-      console.log("Not an OPS repo, buttons will not be added");
-      buttonState.isDisabled = true;
-      buttonState.disabledReason = "Not an OPS repository";
-      return buttonState;
-    }
-
-    // Get repository info
+    // Get repo info.
     const repoInfo = extractRepoInfo();
     if (!repoInfo) {
-      buttonState.isDisabled = true;
-      buttonState.disabledReason = "Could not determine repository information";
-      return buttonState;
+      sharedButtonState.isDisabled = true;
+      sharedButtonState.disabledReason = "Could not determine repo information";
+      return sharedButtonState;
     }
 
-    // Check the latest commit
+    // Check the latest commit.
     const currentCommitSha = await getLatestPrCommit(
       repoInfo.owner,
       repoInfo.repo,
@@ -91,16 +43,53 @@ async function checkButtonState() {
     );
 
     if (!currentCommitSha) {
-      buttonState.isDisabled = true;
-      buttonState.disabledReason = "Could not determine latest commit";
-      return buttonState;
+      sharedButtonState.isDisabled = true;
+      sharedButtonState.disabledReason = "Could not determine latest commit";
+      return sharedButtonState;
     }
 
-    // Check if the commit SHA has changed
-    if (currentCommitSha === buttonState.latestCommitSha) {
-      console.log("Latest commit SHA hasn't changed, checking if build status changed");
+    if (currentCommitSha !== sharedButtonState.latestCommitSha) {
+      // Commit SHA has changed, update it and check build status
+      console.log(`Commit SHA changed from ${sharedButtonState.latestCommitSha} to ${currentCommitSha}`);
+      sharedButtonState.latestCommitSha = currentCommitSha;
 
-      // Even if commit hasn't changed, check build status in case it changed from pending to success/failure
+      // Check build status for the new commit.
+      const opsCheck = await getSpecificStatusCheck(
+        repoInfo.owner,
+        repoInfo.repo,
+        currentCommitSha,
+        "OpenPublishing.Build"
+      );
+
+      if (!opsCheck) {
+        sharedButtonState.isDisabled = true;
+        sharedButtonState.disabledReason = "No OPS build found for this PR";
+        sharedButtonState.lastBuildStatus = null;
+        return sharedButtonState;
+      }
+
+      // Determine button state based on build status.
+      if (opsCheck.status === "pending") {
+        sharedButtonState.isDisabled = true;
+        sharedButtonState.disabledReason = "OPS build is still in progress";
+      } else if (opsCheck.status !== "success") {
+        sharedButtonState.isDisabled = true;
+        sharedButtonState.disabledReason = "OPS build failed - preview not available";
+      } else if (!opsCheck.details_url) {
+        sharedButtonState.isDisabled = true;
+        sharedButtonState.disabledReason = "OPS details URL isn't available";
+      } else {
+        // Build was successful.
+        sharedButtonState.isDisabled = false;
+        sharedButtonState.disabledReason = "";
+      }
+
+      sharedButtonState.lastBuildStatus = opsCheck.status;
+      return sharedButtonState;
+    } else if (sharedButtonState.lastBuildStatus === "pending") {
+      console.log("Commit SHA hasn't changed but build status is pending");
+
+      // Check if build status changed from pending to success/failure.
       const opsCheck = await getSpecificStatusCheck(
         repoInfo.owner,
         repoInfo.repo,
@@ -110,135 +99,119 @@ async function checkButtonState() {
 
       const currentBuildStatus = opsCheck ? opsCheck.status : null;
 
-      if (currentBuildStatus === buttonState.lastBuildStatus) {
+      if (currentBuildStatus === sharedButtonState.lastBuildStatus) {
+        // No change needed, keep current state.
         console.log("Build status hasn't changed, keeping current button state");
-        return buttonState; // No change needed, keep current state
+        return sharedButtonState;
       }
 
-      console.log(`Build status changed from ${buttonState.lastBuildStatus} to ${currentBuildStatus}`);
-      buttonState.lastBuildStatus = currentBuildStatus;
+      console.log(`Build status changed from ${sharedButtonState.lastBuildStatus} to ${currentBuildStatus}`);
 
-      // Update button state based on new build status
+      // Update button state based on new build status.
       if (!opsCheck) {
-        buttonState.isDisabled = true;
-        buttonState.disabledReason = "No OPS build found for this PR";
+        sharedButtonState.disabledReason = "No OPS build found for this PR";
       } else if (opsCheck.status === 'pending') {
-        buttonState.isDisabled = true;
-        buttonState.disabledReason = "OPS build is still in progress";
+        sharedButtonState.disabledReason = "OPS build is still in progress";
       } else if (opsCheck.status !== 'success') {
-        buttonState.isDisabled = true;
-        buttonState.disabledReason = "OPS build failed - preview not available";
+        sharedButtonState.disabledReason = "OPS build failed - preview not available";
       } else if (!opsCheck.details_url) {
-        buttonState.isDisabled = true;
-        buttonState.disabledReason = "OPS details URL isn't available";
+        sharedButtonState.disabledReason = "OPS details URL isn't available";
       } else {
-        // Build was successful
-        buttonState.isDisabled = false;
-        buttonState.disabledReason = "";
+        // Build was successful - clear disablement.
+        sharedButtonState.isDisabled = false;
+        sharedButtonState.disabledReason = "";
       }
 
-      return buttonState;
+      sharedButtonState.lastBuildStatus = currentBuildStatus;
+      return sharedButtonState;
     }
 
-    // Commit SHA has changed, update it and check build status
-    console.log(`Commit SHA changed from ${buttonState.latestCommitSha} to ${currentCommitSha}`);
-    buttonState.latestCommitSha = currentCommitSha;
+    // If we get here, nothing has changed (status or commit SHA), so return existing status.
+    return sharedButtonState;
 
-    // Check build status for the new commit
-    const opsCheck = await getSpecificStatusCheck(
-      repoInfo.owner,
-      repoInfo.repo,
-      currentCommitSha,
-      "OpenPublishing.Build"
-    );
-
-    // Determine button state based on build status
-    if (!opsCheck) {
-      buttonState.isDisabled = true;
-      buttonState.disabledReason = "No OPS build found for this PR";
-      buttonState.lastBuildStatus = null;
-    } else if (opsCheck.status === 'pending') {
-      buttonState.isDisabled = true;
-      buttonState.disabledReason = "OPS build is still in progress";
-      buttonState.lastBuildStatus = 'pending';
-    } else if (opsCheck.status !== 'success') {
-      buttonState.isDisabled = true;
-      buttonState.disabledReason = "OPS build failed - preview not available";
-      buttonState.lastBuildStatus = opsCheck.status;
-    } else if (!opsCheck.details_url) {
-      buttonState.isDisabled = true;
-      buttonState.disabledReason = "OPS details URL isn't available";
-      buttonState.lastBuildStatus = opsCheck.status;
-    } else {
-      // Build was successful
-      buttonState.isDisabled = false;
-      buttonState.disabledReason = "";
-      buttonState.lastBuildStatus = 'success';
-    }
-
-    return buttonState;
   } catch (error) {
     console.error("Error in checkButtonState:", error);
-    buttonState.isDisabled = true;
-    buttonState.disabledReason = "Error checking build status";
-    return buttonState;
+    sharedButtonState.isDisabled = true;
+    sharedButtonState.disabledReason = "Error checking build status";
+    return sharedButtonState;
   }
 }
 
-// Function to update an existing button's state
-function updateButtonState(button, state) {
+// Updates an single button's state.
+// This is called from the interval observer
+// and the mutation observer.
+async function updateButtonState(button, state) {
+  console.log(`Updating button. Current disabled state is ${state.isDisabled}`);
+
   const isDisabled = state.isDisabled;
   const disabledReason = state.disabledReason;
 
   // Check current state
   const currentlyDisabled = button.disabled || button.classList.contains('disabled');
 
-  // Only make changes if the state has changed
-  if (currentlyDisabled !== isDisabled) {
-    console.log(`Changing button state from ${currentlyDisabled} to ${isDisabled}`);
-
-    if (isDisabled) {
-      // Disable the button
-      button.classList.add('disabled');
-      button.style.opacity = "0.6";
-      button.style.cursor = "not-allowed";
-      button.disabled = true;
-
-      // Remove any click handlers
-      const newButton = button.cloneNode(true);
-      button.parentNode.replaceChild(newButton, button);
-
-      // Add tooltip with reason
-      if (disabledReason) {
-        newButton.setAttribute("title", disabledReason);
-        newButton.setAttribute("aria-label", disabledReason);
-      }
-    } else {
-      // Enable the button
-      button.classList.remove('disabled');
-      button.style.removeProperty('opacity');
-      button.style.removeProperty('cursor');
-      button.disabled = false;
-
-      // Add click handler
-      button.addEventListener('click', handleClick, { capture: true });
-
-      // Remove any disability-related attributes
-      button.removeAttribute("title");
-      button.removeAttribute("aria-label");
-    }
-  } else if (isDisabled && disabledReason) {
-    // Update the reason even if disabled state hasn't changed
-    button.setAttribute("title", disabledReason);
-    button.setAttribute("aria-label", disabledReason);
+  // Update the button only if the state has changed.
+  if (currentlyDisabled === isDisabled) {
+    return;
   }
+
+  console.log(`Changing button state from ${currentlyDisabled} to ${isDisabled}`);
+
+  if (isDisabled) {
+    // Disable the button
+    button.classList.add('disabled');
+    button.style.cursor = "not-allowed";
+    button.disabled = true;
+
+    // Remove any click handlers
+    const newButton = button.cloneNode(true);
+    button.parentNode.replaceChild(newButton, button);
+
+    // Add tooltip with reason
+    if (disabledReason) {
+      newButton.title = disabledReason;
+      newButton.ariaLabel = disabledReason;
+    }
+  }
+
+  // Enable the button
+  button.classList.remove('disabled');
+  button.style.removeProperty('cursor');
+  button.disabled = false;
+
+  // Remove any disabled-related attributes
+  button.removeAttribute("title");
+  button.removeAttribute("aria-label");
+
+  // Try to get preview URL for tooltip
+  // TODO - can we also store the preview URL with the button so handleClick doesn't have to fetch it?
+  // e.g. button.dataset.previewUrl = previewUrl;
+  const filePathElement = button.closest('[data-path]');
+  if (filePathElement) {
+    const fileName = filePathElement.querySelector(".Link--primary")?.textContent?.split(" → ").pop();
+    if (fileName) {
+      // Set preview URL as title asynchronously
+      getPreviewUrl(fileName).then(previewUrl => {
+        if (previewUrl) {
+          button.title = previewUrl;
+        }
+      }).catch(() => {
+        // Silently ignore errors for tooltip
+      });
+    }
+  }
+
+  // Finally, add click handler.
+  button.addEventListener('click', handleClick, { capture: true });
 }
 
-// Function to update all existing buttons
+// Updates all existing buttons (called from interval observer).
 async function updateAllButtons() {
-  const state = await checkButtonState();
+  const state = await checkSharedButtonState();
   const allButtons = document.querySelectorAll('.preview-on-learn');
-  console.log(`Updating ${allButtons.length} existing buttons`);
+
+  if (!state) {
+    console.warn("Couldn't get shared button state");
+  }
 
   allButtons.forEach(button => {
     updateButtonState(button, state);
@@ -259,10 +232,12 @@ async function handleClick(event) {
 
   const repoInfo = extractRepoInfo();
   if (!repoInfo) {
-    console.error("Failed to extract repository information from URL");
+    console.error("Failed to extract repo information from URL");
     return;
   }
 
+  // TODO - we shouldn't have to get the commit and preview info.
+  // We should already have everything we need.
   try {
     // Get the latest commit SHA.
     const commitSha = await getLatestPrCommit(
@@ -340,6 +315,56 @@ async function handleClick(event) {
   }
 }
 
+// Function to get preview URL for a file.
+async function getPreviewUrl(fileName) {
+  try {
+    const repoInfo = extractRepoInfo();
+    if (!repoInfo) {
+      return null;
+    }
+
+    // Get the latest commit SHA.
+    const commitSha = await getLatestPrCommit(
+      repoInfo.owner,
+      repoInfo.repo,
+      repoInfo.prNumber
+    );
+
+    if (!commitSha) {
+      return null;
+    }
+
+    // Get the OPS status check.
+    const opsCheck = await getSpecificStatusCheck(
+      repoInfo.owner,
+      repoInfo.repo,
+      commitSha,
+      "OpenPublishing.Build"
+    );
+
+    if (!opsCheck || !opsCheck.details_url || opsCheck.status !== 'success') {
+      return null;
+    }
+
+    // Fetch and parse the build report.
+    const buildReportDoc = await fetchBuildReport(opsCheck.details_url);
+    if (!buildReportDoc) {
+      return null;
+    }
+
+    const previewLinks = extractPreviewLinks(buildReportDoc);
+    if (!previewLinks || Object.keys(previewLinks).length === 0) {
+      return null;
+    }
+
+    // Try to find a match for the current file.
+    return previewLinks[fileName] || null;
+  } catch (error) {
+    console.error('Error getting preview URL:', error);
+    return null;
+  }
+}
+
 function addButton(showCommentsMenuItem, isDisabled = false, disabledReason = "") {
   try {
     // Create and add divider.
@@ -371,6 +396,22 @@ function addButton(showCommentsMenuItem, isDisabled = false, disabledReason = ""
     } else {
       // Add event listener only if not disabled.
       menuItem.addEventListener('click', handleClick, { capture: true });
+
+      // For enabled buttons, try to get preview URL for tooltip
+      const filePathElement = showCommentsMenuItem.closest('[data-path]');
+      if (filePathElement) {
+        const fileName = filePathElement.querySelector(".Link--primary")?.textContent?.split(" → ").pop();
+        if (fileName) {
+          // Set preview URL as title asynchronously
+          getPreviewUrl(fileName).then(previewUrl => {
+            if (previewUrl && !menuItem.disabled) {
+              menuItem.title = previewUrl;
+            }
+          }).catch(() => {
+            // Silently ignore errors for tooltip
+          });
+        }
+      }
     }
 
     // Add new button to menu below divider.
@@ -382,27 +423,28 @@ function addButton(showCommentsMenuItem, isDisabled = false, disabledReason = ""
   }
 }
 
-// Adds a "Preview on Learn" menu item to all matching
-// dropdown menus if the repo is an OPS repo.
-async function addMenuItems() {
+// Adds "Preview on Learn" menu items.
+// Only called once, from init().
+async function addInitialMenuItems() {
   try {
     // Check if this is an OPS repo.
     const isOps = await isOpsRepo();
 
-    if (isOps) {
-      // Check button state
-      const state = await checkButtonState();
-
-      // Add "Preview on Learn" menu item after "Delete file" menu item.
-      const showCommentsItems = document.querySelectorAll('.js-file-header-dropdown a[aria-label="Delete this file"], .js-file-header-dropdown button[aria-label="You must be signed in and have push access to delete this file."]');
-      showCommentsItems.forEach(menuItem => {
-        addButton(menuItem, state.isDisabled, state.disabledReason);
-      });
-    } else {
-      console.log("Not adding buttons - isOpsRepo() returned false");
+    if (!isOps) {
+      return;
     }
+
+    // Check shared button state.
+    const state = await checkSharedButtonState();
+
+    // Add "Preview on Learn" menu item after "Delete file" menu item.
+    let cssSelector = '.js-file-header-dropdown a[aria-label="Delete this file"], .js-file-header-dropdown button[aria-label="You must be signed in and have push access to delete this file."]';
+    const deleteFileItems = document.querySelectorAll(cssSelector);
+    deleteFileItems.forEach(item => {
+      addButton(item, state.isDisabled, state.disabledReason);
+    });
   } catch (error) {
-    console.error("Error in addMenuItems:", error);
+    console.error("Error in addInitialMenuItems:", error);
   }
 }
 
@@ -412,156 +454,28 @@ function isPrFilesPage() {
   return path.includes('/pull/') && path.includes('/files');
 }
 
-// Set up observers to watch for DOM changes.
-function setUpObservers() {
-  console.log('Setting up mutation observers');
-
-  // Set up commit check interval
-  // This will check if the latest commit has changed
-  const commitCheckInterval = setInterval(async () => {
-    const repoInfo = extractRepoInfo();
-    if (repoInfo) {
-      const currentSha = await getLatestPrCommit(
-        repoInfo.owner,
-        repoInfo.repo,
-        repoInfo.prNumber
-      );
-
-      if (currentSha && currentSha !== buttonState.latestCommitSha) {
-        console.log(`Latest commit changed from ${buttonState.latestCommitSha} to ${currentSha}`);
-        updateAllButtons();
-      }
-    }
-  }, 15000); // Check every 15 seconds
-
-  // Observer for file header dropdown additions
-  const fileObserver = new MutationObserver(async mutations => {
-    for (const mutation of mutations) {
-      // Only interested in added nodes.
-      if (mutation.type !== 'childList' || mutation.addedNodes.length === 0) {
-        continue;
-      }
-
-      // Check each added node.
-      for (const node of mutation.addedNodes) {
-        if (!(node instanceof HTMLElement)) {
-          continue;
-        }
-
-        // Check if a dropdown menu was added.
-        const dropdowns = node.classList?.contains('js-file-header-dropdown')
-          ? [node]
-          : [...node.querySelectorAll('.js-file-header-dropdown')];
-
-        if (dropdowns.length > 0) {
-          console.log('Detected new file dropdown(s):', dropdowns.length);
-
-          // Get current button state once for all dropdowns
-          const state = await checkButtonState();
-
-          // Find menu items in each dropdown that we want to add our button after.
-          for (const dropdown of dropdowns) {
-            const menuItems = dropdown.querySelectorAll('a[aria-label="Delete this file"], button[aria-label="You must be signed in and have push access to delete this file."]');
-            if (menuItems.length > 0) {
-              console.log('Found menu items to modify');
-              menuItems.forEach(item => {
-                // Check if we've already added our button to this menu.
-                const previewButton = dropdown.querySelector('.preview-on-learn');
-                if (!previewButton) {
-                  addButton(item, state.isDisabled, state.disabledReason);
-                } else {
-                  updateButtonState(previewButton, state);
-                }
-              });
-            }
-          }
-        }
-      }
-    }
-  });
-
-  // Start observing the whole document for file changes.
-  fileObserver.observe(document.body, {
-    childList: true,
-    subtree: true
-  });
-
-  // Update the init function to clean up all intervals
-  window.addEventListener('beforeunload', () => {
-    fileObserver.disconnect();
-    clearInterval(commitCheckInterval);
-  });
-
-  return {
-    fileObserver,
-    commitCheckInterval
-  };
-}
-
 async function init() {
   // Initialize Octokit first
   await initializeOctokit();
 
-  const observers = setUpObservers();
+  const observers = setUpObservers(updateAllButtons, checkSharedButtonState, addButton, updateButtonState);
 
   if (isPrFilesPage()) {
-    addMenuItems();
+    addInitialMenuItems();
   }
+
+  // Set up navigation listeners for GitHub's SPA behavior.
+  const cleanupNavigation = setUpNavigationListeners(() => {
+    isDifferentRepo();
+  });
 
   // Clean up when navigating away.
   window.addEventListener('beforeunload', () => {
     observers.fileObserver.disconnect();
     clearInterval(observers.commitCheckInterval);
+    cleanupNavigation();
   });
 }
 
 init();
-
-// Set up navigation listeners for GitHub's SPA behavior
-let lastUrl = window.location.href;
-
-// Listen for history changes (forward/back navigation)
-window.addEventListener('popstate', function () {
-  if (window.location.href !== lastUrl) {
-    console.log('Navigation detected via popstate');
-    lastUrl = window.location.href;
-    checkForRepositoryChange();
-  }
-});
-
-// Override pushState to detect programmatic navigation
-const originalPushState = history.pushState;
-history.pushState = function () {
-  originalPushState.apply(this, arguments);
-  if (window.location.href !== lastUrl) {
-    console.log('Navigation detected via pushState');
-    lastUrl = window.location.href;
-    checkForRepositoryChange();
-  }
-};
-
-// Override replaceState to detect programmatic navigation
-const originalReplaceState = history.replaceState;
-history.replaceState = function () {
-  originalReplaceState.apply(this, arguments);
-  if (window.location.href !== lastUrl) {
-    console.log('Navigation detected via replaceState');
-    lastUrl = window.location.href;
-    checkForRepositoryChange();
-  }
-};
-
-// Also check for URL changes via MutationObserver as a fallback
-const urlObserver = new MutationObserver(function () {
-  if (window.location.href !== lastUrl) {
-    console.log('Navigation detected via MutationObserver');
-    lastUrl = window.location.href;
-    checkForRepositoryChange();
-  }
-});
-
-urlObserver.observe(document, {
-  childList: true,
-  subtree: true
-});
 
