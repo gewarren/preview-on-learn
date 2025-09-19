@@ -83,26 +83,44 @@ async function getStatusChecks(owner, repo, commitSha) {
 
 // Gets a specific status check by name.
 export async function getSpecificStatusCheck(owner, repo, commitSha, checkName) {
-    try {
-        const statusChecks = await getStatusChecks(owner, repo, commitSha);
+    const maxRetries = 5;
+    const retryDelay = 2000; // 2 seconds
 
-        const matchingStatusCheck = statusChecks.find(status =>
-            status.context.toLowerCase().includes(checkName.toLowerCase())
-        );
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            console.log(`Attempting to find status check "${checkName}" (attempt ${attempt}/${maxRetries})`);
 
-        if (matchingStatusCheck) {
-            console.log(`Found matching status check: ${matchingStatusCheck.context}`);
-            return {
-                name: matchingStatusCheck.context,
-                status: matchingStatusCheck.state,
-                details_url: matchingStatusCheck.target_url
-            };
+            const statusChecks = await getStatusChecks(owner, repo, commitSha);
+
+            const matchingStatusCheck = statusChecks.find(status =>
+                status.context.toLowerCase().includes(checkName.toLowerCase())
+            );
+
+            if (matchingStatusCheck) {
+                console.log(`Found matching status check: ${matchingStatusCheck.context}`);
+                return {
+                    name: matchingStatusCheck.context,
+                    status: matchingStatusCheck.state,
+                    details_url: matchingStatusCheck.target_url
+                };
+            }
+
+            console.warn(`No status check found with name containing "${checkName}" on attempt ${attempt}`);
+
+            // If this isn't the last attempt, wait before retrying
+            if (attempt < maxRetries) {
+                await new Promise(resolve => setTimeout(resolve, retryDelay = retryDelay * 2));
+            }
+        } catch (error) {
+            console.error(`Error fetching specific status check on attempt ${attempt}:`, error);
+
+            // If this isn't the last attempt, wait before retrying
+            if (attempt < maxRetries) {
+                await new Promise(resolve => setTimeout(resolve, retryDelay = retryDelay * 2));
+            }
         }
-
-        console.warn(`No status check found with name containing "${checkName}"`);
-        return null;
-    } catch (error) {
-        console.error('Error fetching specific status check:', error);
-        return null;
     }
+
+    console.warn(`Failed to find status check "${checkName}" after ${maxRetries} attempts`);
+    return null;
 }

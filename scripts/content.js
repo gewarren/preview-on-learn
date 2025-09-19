@@ -47,6 +47,11 @@ async function checkSharedButtonState() {
     return sharedButtonState;
   }
 
+  // Check that we're still on a PR files page.
+  if (!isPrFilesPage()) {
+    return null;
+  }
+
   sharedButtonState.lastCheckTime = now;
   console.log("Checking button state...");
 
@@ -133,12 +138,16 @@ async function checkSharedButtonState() {
 
       // Update button state based on new build status.
       if (!opsCheck) {
+        sharedButtonState.isDisabled = true;
         sharedButtonState.disabledReason = "No OPS build found for this PR";
       } else if (opsCheck.status === 'pending') {
+        sharedButtonState.isDisabled = true;
         sharedButtonState.disabledReason = "OPS build is still in progress";
       } else if (opsCheck.status !== 'success') {
+        sharedButtonState.isDisabled = true;
         sharedButtonState.disabledReason = "OPS build failed - preview not available";
       } else if (!opsCheck.details_url) {
+        sharedButtonState.isDisabled = true;
         sharedButtonState.disabledReason = "OPS details URL isn't available";
       } else {
         // Build was successful - clear disablement.
@@ -172,18 +181,19 @@ async function updateButtonState(button, state) {
   // Check current state.
   const currentlyDisabled = button.disabled || button.classList.contains('disabled');
 
-  // Update the button only if the state has changed.
-  if (currentlyDisabled === isDisabled) {
+  // Update the button only if the state or the reason has changed.
+  if (currentlyDisabled === isDisabled && button.disabledReason === disabledReason) {
     return;
   }
 
-  console.log(`Changing button state from ${currentlyDisabled} to ${isDisabled}`);
+  console.log(`Changing button state from ${currentlyDisabled} to ${isDisabled} or changing disabled reason`);
 
   if (isDisabled) {
     // Disable the button
     button.classList.add('disabled');
     button.style.cursor = "not-allowed";
     button.disabled = true;
+    button.disabledReason = disabledReason;
 
     // Remove any click handlers
     const newButton = button.cloneNode(true);
@@ -195,36 +205,40 @@ async function updateButtonState(button, state) {
       newButton.ariaLabel = disabledReason;
     }
   }
+  else {
+    // Enable the button
+    button.classList.remove('disabled');
+    button.style.removeProperty('cursor');
+    button.disabled = false;
 
-  // Enable the button
-  button.classList.remove('disabled');
-  button.style.removeProperty('cursor');
-  button.disabled = false;
+    // Remove any disabled-related attributes
+    button.removeAttribute("title");
+    button.removeAttribute("aria-label");
 
-  // Remove any disabled-related attributes
-  button.removeAttribute("title");
-  button.removeAttribute("aria-label");
-
-  // Try to get preview URL for tooltip
-  // TODO - can we also store the preview URL with the button so handleClick doesn't have to fetch it?
-  // e.g. button.dataset.previewUrl = previewUrl;
-  const filePathElement = button.closest('[data-path]');
-  if (filePathElement) {
-    const fileName = filePathElement.querySelector(".Link--primary")?.textContent?.split(" → ").pop();
-    if (fileName) {
-      // Set preview URL as title asynchronously
-      getPreviewUrl(fileName).then(previewUrl => {
-        if (previewUrl) {
-          button.title = previewUrl;
-        }
-      }).catch(() => {
-        // Silently ignore errors for tooltip
-      });
+    // Store preview URL and add to tooltip.
+    const filePathElement = button.closest('[data-path]');
+    if (filePathElement) {
+      const fileName = filePathElement.querySelector(".Link--primary")?.textContent?.split(" → ").pop();
+      if (fileName) {
+        // Set preview URL as title asynchronously
+        getPreviewUrl(fileName).then(previewUrl => {
+          if (previewUrl) {
+            button.title = previewUrl;
+            button.dataset.previewUrl = previewUrl;
+          }
+        }).catch(() => {
+          console.warn("Error getting preview URL");
+        });
+      }
     }
-  }
 
-  // Finally, add click handler.
-  button.addEventListener('click', handleClick, { capture: true });
+    // Finally, add click handler.
+    button.addEventListener('click', function () {
+      if (button.dataset.previewUrl) {
+        window.open(button.dataset.previewUrl, '_blank');
+      }
+    }, { capture: true });
+  }
 }
 
 // Updates all existing buttons (called from interval observer).
@@ -233,109 +247,13 @@ async function updateAllButtons() {
   const allButtons = document.querySelectorAll('.preview-on-learn');
 
   if (!state) {
-    console.warn("Couldn't get shared button state");
+    console.log("Couldn't get shared button state");
+    return;
   }
 
   allButtons.forEach(button => {
     updateButtonState(button, state);
   });
-}
-
-// Open docs preview when the menu item is clicked.
-async function handleClick(event) {
-  const menuItem = event.currentTarget;
-
-  const [originalFileName, newFileName = originalFileName] = menuItem
-    .closest('[data-path]')
-    .querySelector(".Link--primary")
-    .textContent
-    .split(" → ");
-
-  console.log(`File name is ${newFileName}.`);
-
-  const repoInfo = extractRepoInfo();
-  if (!repoInfo) {
-    console.error("Failed to extract repo information from URL");
-    return;
-  }
-
-  // TODO - we shouldn't have to get the commit and preview info.
-  // We should already have everything we need.
-  try {
-    // Get the latest commit SHA.
-    const commitSha = await getLatestPrCommit(
-      repoInfo.owner,
-      repoInfo.repo,
-      repoInfo.prNumber
-    );
-
-    if (!commitSha) {
-      console.error("Failed to get latest PR commit SHA");
-      return;
-    }
-
-    // Get the OPS status check.
-    const opsCheck = await getSpecificStatusCheck(
-      repoInfo.owner,
-      repoInfo.repo,
-      commitSha,
-      "OpenPublishing.Build"
-    );
-
-    if (!opsCheck || !opsCheck.details_url) {
-      console.error("Failed to find OPS build status check or details URL");
-      return;
-    }
-
-    if (opsCheck.status === 'pending') {
-      console.log('OPS build is still in progress');
-      alert("The OPS build is still in progress. Please try again later when the build completes.");
-      return;
-    }
-
-    if (opsCheck.status !== 'success') {
-      console.warn('OPS build was not successful');
-      alert("The OPS build was not successful. Please check the build status and try again after a successful build.");
-      return;
-    }
-
-    // Fetch and parse the build report.
-    console.log("Fetching build report from:", opsCheck.details_url);
-    const buildReportDoc = await fetchBuildReport(opsCheck.details_url);
-
-    if (!buildReportDoc) {
-      console.error("Failed to fetch or parse build report");
-      return;
-    }
-
-    const previewLinks = extractPreviewLinks(buildReportDoc);
-
-    if (!previewLinks || Object.keys(previewLinks).length === 0) {
-      console.warn('No preview links found in the build report');
-      alert("No preview links were found in the build report. This could be because the build is still processing or there was an issue with the build.");
-      return;
-    }
-
-    // Try to find a match for the current file.
-    let previewUrl = null;
-
-    // Try exact match first.
-    if (previewLinks[newFileName]) {
-      previewUrl = previewLinks[newFileName];
-      console.log(`Found preview URL for ${newFileName}: ${previewUrl}`);
-    }
-
-    // If we found a preview URL, use it.
-    if (previewUrl) {
-      window.open(previewUrl, '_blank');
-    } else {
-      console.warn(`No preview link found for ${newFileName} in the build report`);
-      alert(`No preview link was found for "${newFileName}" in the build report. This file might not be part of the published content.`);
-    }
-  } catch (error) {
-    console.error('Error in previewFile:', error);
-    alert("An error occurred while trying to preview the file. Please check the console for details.");
-  }
 }
 
 // Function to get preview URL for a file.
@@ -424,24 +342,28 @@ function addButton(showCommentsMenuItem, isDisabled = false, disabledReason = ""
         menuItem.ariaLabel = disabledReason;
       }
     } else {
-      // Add event listener only if not disabled.
-      menuItem.addEventListener('click', handleClick, { capture: true });
-
-      // For enabled buttons, try to get preview URL for tooltip
+      // Get and store the preview URL.
       const filePathElement = showCommentsMenuItem.closest('[data-path]');
       if (filePathElement) {
         const fileName = filePathElement.querySelector(".Link--primary")?.textContent?.split(" → ").pop();
         if (fileName) {
-          // Set preview URL as title asynchronously
           getPreviewUrl(fileName).then(previewUrl => {
             if (previewUrl && !menuItem.disabled) {
               menuItem.title = previewUrl;
+              menuItem.dataset.previewUrl = previewUrl;
             }
           }).catch(() => {
-            // Silently ignore errors for tooltip
+            console.warn("Error while getting preview URL.");
           });
         }
       }
+
+      // Add event listener.
+      menuItem.addEventListener('click', function () {
+        if (menuItem.dataset.previewUrl) {
+          window.open(menuItem.dataset.previewUrl, '_blank');
+        }
+      }, { capture: true });
     }
 
     // Add new button to menu below divider.
