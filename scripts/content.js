@@ -1,12 +1,16 @@
 import { isOpsRepo, isDifferentRepo } from './repo.js';
 import { initializeOctokit } from './octokit.js';
 import { extractRepoInfo, getLatestPrCommit, getSpecificStatusCheck } from './pr-helpers.js';
-import { fetchBuildReport } from './build-report.js';
-import { extractPreviewLinks } from './build-report.js';
+import { getPreviewUrl } from './build-report.js';
 import { setUpObservers, setUpNavigationListeners, setUpTokenObserver } from './observers.js';
 import { hasGitHubToken } from './auth.js';
 
-const INVALID_TOKEN_MESSAGE = "You haven't entered a GitHub token or the token you entered is invalid. Go to Extensions > Preview on Learn and enter a valid PAT. The PAT should have 'repo' scope and be configured for SSO."
+const INVALID_TOKEN_MESSAGE = "You haven't entered a GitHub token or the token you entered is invalid. Go to Extensions > Preview on Learn and enter a valid PAT. The PAT should have 'repo' scope and be configured for SSO.";
+const NO_PREVIEW_URL = "No preview URL is available for this file, possibly because it isn't published on learn.microsoft.com.";
+const NO_OPS_BUILD_FOUND = "No OPS build status check was found";
+const OPS_BUILD_PENDING = "The OPS build is still in progress";
+const OPS_BUILD_FAILED = "The OPS build failed";
+const NO_OPS_DETAILS_URL = "The OPS details URL isn't available";
 
 // Helper function to remove all existing Preview on Learn buttons
 function removeAllButtons() {
@@ -92,7 +96,7 @@ async function checkSharedButtonState() {
 
       if (!opsCheck) {
         sharedButtonState.isDisabled = true;
-        sharedButtonState.disabledReason = "No OPS build found for this PR";
+        sharedButtonState.disabledReason = NO_OPS_BUILD_FOUND;
         sharedButtonState.lastBuildStatus = null;
         return sharedButtonState;
       }
@@ -100,13 +104,13 @@ async function checkSharedButtonState() {
       // Determine button state based on build status.
       if (opsCheck.status === "pending") {
         sharedButtonState.isDisabled = true;
-        sharedButtonState.disabledReason = "OPS build is still in progress";
+        sharedButtonState.disabledReason = OPS_BUILD_PENDING;
       } else if (opsCheck.status !== "success") {
         sharedButtonState.isDisabled = true;
-        sharedButtonState.disabledReason = "OPS build failed - preview not available";
+        sharedButtonState.disabledReason = OPS_BUILD_FAILED;
       } else if (!opsCheck.details_url) {
         sharedButtonState.isDisabled = true;
-        sharedButtonState.disabledReason = "OPS details URL isn't available";
+        sharedButtonState.disabledReason = NO_OPS_DETAILS_URL;
       } else {
         // Build was successful.
         sharedButtonState.isDisabled = false;
@@ -139,16 +143,16 @@ async function checkSharedButtonState() {
       // Update button state based on new build status.
       if (!opsCheck) {
         sharedButtonState.isDisabled = true;
-        sharedButtonState.disabledReason = "No OPS build found for this PR";
+        sharedButtonState.disabledReason = NO_OPS_BUILD_FOUND;
       } else if (opsCheck.status === 'pending') {
         sharedButtonState.isDisabled = true;
-        sharedButtonState.disabledReason = "OPS build is still in progress";
+        sharedButtonState.disabledReason = OPS_BUILD_PENDING;
       } else if (opsCheck.status !== 'success') {
         sharedButtonState.isDisabled = true;
-        sharedButtonState.disabledReason = "OPS build failed - preview not available";
+        sharedButtonState.disabledReason = OPS_BUILD_FAILED;
       } else if (!opsCheck.details_url) {
         sharedButtonState.isDisabled = true;
-        sharedButtonState.disabledReason = "OPS details URL isn't available";
+        sharedButtonState.disabledReason = NO_OPS_DETAILS_URL;
       } else {
         // Build was successful - clear disablement.
         sharedButtonState.isDisabled = false;
@@ -175,69 +179,63 @@ async function checkSharedButtonState() {
 async function updateButtonState(button, state) {
   console.log(`Updating button. Current disabled state is ${state.isDisabled}`);
 
-  const isDisabled = state.isDisabled;
-  const disabledReason = state.disabledReason;
+  const isNowDisabled = state.isDisabled;
+  let disabledReason = state.disabledReason;
 
   // Check current state.
   const currentlyDisabled = button.disabled || button.classList.contains('disabled');
 
   // Update the button only if the state or the reason has changed.
-  if (currentlyDisabled === isDisabled && button.disabledReason === disabledReason) {
+  if (currentlyDisabled === isNowDisabled && button.disabledReason === disabledReason) {
     return;
   }
 
-  console.log(`Changing button state from ${currentlyDisabled} to ${isDisabled} or changing disabled reason`);
+  console.log(`Changing button state from ${currentlyDisabled} to ${isNowDisabled} or changing disabled reason`);
 
-  if (isDisabled) {
-    // Disable the button
-    button.classList.add('disabled');
-    button.style.cursor = "not-allowed";
-    button.disabled = true;
-    button.disabledReason = disabledReason;
-
-    // Remove any click handlers
-    const newButton = button.cloneNode(true);
-    button.parentNode.replaceChild(newButton, button);
-
-    // Add tooltip with reason
-    if (disabledReason) {
-      newButton.title = disabledReason;
-      newButton.ariaLabel = disabledReason;
-    }
-  }
-  else {
-    // Enable the button
-    button.classList.remove('disabled');
-    button.style.removeProperty('cursor');
-    button.disabled = false;
-
-    // Remove any disabled-related attributes
-    button.removeAttribute("title");
-    button.removeAttribute("aria-label");
-
-    // Store preview URL and add to tooltip.
+  if (!isNowDisabled) {
+    // Try to get preview URL.
     const filePathElement = button.closest('[data-path]');
     if (filePathElement) {
       const fileName = filePathElement.querySelector(".Link--primary")?.textContent?.split(" → ").pop();
       if (fileName) {
-        // Set preview URL as title asynchronously
-        getPreviewUrl(fileName).then(previewUrl => {
+        try {
+          // Await the preview URL
+          const previewUrl = await getPreviewUrl(fileName);
           if (previewUrl) {
+            console.log(`Adding preview URL to ${fileName}`);
             button.title = previewUrl;
             button.dataset.previewUrl = previewUrl;
+
+            // Add click handler.
+            button.addEventListener(
+              'click',
+              () => window.open(previewUrl, '_blank'),
+              { capture: true });
+
+            // Enable the button and return;
+            button.disabled = false;
+            return;
+          } else {
+            // Likely an unpublished file (e.g. docfx.json).
+            disabledReason = NO_PREVIEW_URL;
           }
-        }).catch(() => {
-          console.warn("Error getting preview URL");
-        });
+        } catch (error) {
+          console.error('Error getting preview URL:', error);
+          disabledReason = NO_PREVIEW_URL;
+        }
       }
     }
+  }
 
-    // Finally, add click handler.
-    button.addEventListener('click', function () {
-      if (button.dataset.previewUrl) {
-        window.open(button.dataset.previewUrl, '_blank');
-      }
-    }, { capture: true });
+  // Button needs to be disabled if we get here.
+
+  button.classList.add('disabled');
+  button.disabled = true;
+
+  // Add tooltip with reason
+  if (disabledReason) {
+    button.disabledReason = disabledReason;
+    button.title = disabledReason;
   }
 }
 
@@ -254,56 +252,6 @@ async function updateAllButtons() {
   allButtons.forEach(button => {
     updateButtonState(button, state);
   });
-}
-
-// Function to get preview URL for a file.
-async function getPreviewUrl(fileName) {
-  try {
-    const repoInfo = extractRepoInfo();
-    if (!repoInfo) {
-      return null;
-    }
-
-    // Get the latest commit SHA.
-    const commitSha = await getLatestPrCommit(
-      repoInfo.owner,
-      repoInfo.repo,
-      repoInfo.prNumber
-    );
-
-    if (!commitSha) {
-      return null;
-    }
-
-    // Get the OPS status check.
-    const opsCheck = await getSpecificStatusCheck(
-      repoInfo.owner,
-      repoInfo.repo,
-      commitSha,
-      "OpenPublishing.Build"
-    );
-
-    if (!opsCheck || !opsCheck.details_url || opsCheck.status !== 'success') {
-      return null;
-    }
-
-    // Fetch and parse the build report.
-    const buildReportDoc = await fetchBuildReport(opsCheck.details_url);
-    if (!buildReportDoc) {
-      return null;
-    }
-
-    const previewLinks = extractPreviewLinks(buildReportDoc);
-    if (!previewLinks || Object.keys(previewLinks).length === 0) {
-      return null;
-    }
-
-    // Try to find a match for the current file.
-    return previewLinks[fileName] || null;
-  } catch (error) {
-    console.error('Error getting preview URL:', error);
-    return null;
-  }
 }
 
 function addButton(showCommentsMenuItem, isDisabled = false, disabledReason = "") {
@@ -332,14 +280,11 @@ function addButton(showCommentsMenuItem, isDisabled = false, disabledReason = ""
 
     // If disabled, add appropriate styling and attributes.
     if (isDisabled) {
-      menuItem.classList.add("disabled");
-      menuItem.style.cursor = "not-allowed";
       menuItem.disabled = true;
 
       // Add tooltip with reason.
       if (disabledReason) {
         menuItem.title = disabledReason;
-        menuItem.ariaLabel = disabledReason;
       }
     } else {
       // Get and store the preview URL.
@@ -409,6 +354,7 @@ function isPrFilesPage() {
   return path.includes('/pull/') && path.includes('/files');
 }
 
+// Basic init if the user hasn't added a GitHub token.
 async function init() {
   // Check if user has a GitHub token.
   const hasToken = await hasGitHubToken();
@@ -462,6 +408,7 @@ async function init() {
   await fullInit();
 }
 
+// Full init with GitHub queries if user has added a GitHub token.
 async function fullInit() {
   // Initialize Octokit.
   await initializeOctokit();

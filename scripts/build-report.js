@@ -1,5 +1,57 @@
+import { extractRepoInfo, getLatestPrCommit, getSpecificStatusCheck } from './pr-helpers.js';
+
+// Gets preview URL for a file from the build report.
+export async function getPreviewUrl(fileName) {
+    try {
+        const repoInfo = extractRepoInfo();
+        if (!repoInfo) {
+            return null;
+        }
+
+        // Get the latest commit SHA.
+        const commitSha = await getLatestPrCommit(
+            repoInfo.owner,
+            repoInfo.repo,
+            repoInfo.prNumber
+        );
+
+        if (!commitSha) {
+            return null;
+        }
+
+        // Get the OPS status check.
+        const opsCheck = await getSpecificStatusCheck(
+            repoInfo.owner,
+            repoInfo.repo,
+            commitSha,
+            "OpenPublishing.Build"
+        );
+
+        if (!opsCheck || !opsCheck.details_url || opsCheck.status !== 'success') {
+            return null;
+        }
+
+        // Fetch and parse the build report.
+        const buildReportDoc = await fetchBuildReport(opsCheck.details_url);
+        if (!buildReportDoc) {
+            return null;
+        }
+
+        const previewLinks = extractPreviewLinks(buildReportDoc);
+        if (!previewLinks || Object.keys(previewLinks).length === 0) {
+            return null;
+        }
+
+        // Try to find a match for the current file.
+        return previewLinks[fileName] || null;
+    } catch (error) {
+        console.error('Error getting preview URL:', error);
+        return null;
+    }
+}
+
 // Fetches and parses the build report.
-export async function fetchBuildReport(reportUrl) {
+async function fetchBuildReport(reportUrl) {
     try {
         // Fetch the build report HTML.
         const response = await fetch(reportUrl);
@@ -23,7 +75,7 @@ export async function fetchBuildReport(reportUrl) {
 }
 
 // Extracts preview links from the build report.
-export function extractPreviewLinks(buildReportDoc) {
+function extractPreviewLinks(buildReportDoc) {
     try {
         if (!buildReportDoc) return null;
 
@@ -86,8 +138,6 @@ function processRow(row, previewLinks) {
         if (fileLink && previewLink) {
             const filePath = fileLink.textContent.trim();
             const previewUrl = previewLink.href;
-
-            console.log(`Found file: ${filePath} with preview URL: ${previewUrl}`);
 
             if (filePath && previewUrl) {
                 previewLinks[filePath] = previewUrl;
