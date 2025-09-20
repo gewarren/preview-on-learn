@@ -12,12 +12,12 @@ export function extractRepoInfo() {
     return null;
 }
 
-// Gets the latest commit SHA of the PR.
-export async function getLatestPrCommit(owner, repo, prNumber) {
+// Gets the latest commit SHA and status of the PR.
+export async function getPrInfo(owner, repo, prNumber) {
     try {
-        console.log(`Attempting to get latest commit for PR #${prNumber} in ${owner}/${repo}`);
+        console.log(`Attempting to get latest commit and status for PR #${prNumber} in ${owner}/${repo}`);
 
-        // Get the PR details, which includes the latest commit SHA.
+        // Get the PR details, which includes the latest commit SHA and status.
         const { data: pullRequest } = await octokit.pulls.get({
             owner,
             repo,
@@ -26,8 +26,23 @@ export async function getLatestPrCommit(owner, repo, prNumber) {
 
         if (pullRequest && pullRequest.head && pullRequest.head.sha) {
             const latestCommitSha = pullRequest.head.sha;
-            console.log(`Latest commit SHA: ${latestCommitSha}`);
-            return latestCommitSha;
+            
+            // Determine PR status: GitHub API returns 'open' or 'closed', 
+            // but we need to distinguish between 'closed' and 'merged'
+            let prStatus;
+            if (pullRequest.state === 'open') {
+                prStatus = 'open';
+            } else if (pullRequest.merged) {
+                prStatus = 'merged';
+            } else {
+                prStatus = 'closed';
+            }
+            
+            console.log(`Latest commit SHA: ${latestCommitSha}, PR status: ${prStatus}`);
+            return {
+                commitSha: latestCommitSha,
+                prStatus: prStatus
+            };
         } else {
             console.warn('Could not find commit SHA in PR data');
             return null;
@@ -83,8 +98,8 @@ async function getStatusChecks(owner, repo, commitSha) {
 
 // Gets a specific status check by name.
 export async function getSpecificStatusCheck(owner, repo, commitSha, checkName) {
-    const maxRetries = 5;
-    const retryDelay = 2000; // 2 seconds
+    const maxRetries = 3;
+    let retryDelay = 2000; // 2 seconds
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
@@ -106,21 +121,19 @@ export async function getSpecificStatusCheck(owner, repo, commitSha, checkName) 
             }
 
             console.warn(`No status check found with name containing "${checkName}" on attempt ${attempt}`);
-
-            // If this isn't the last attempt, wait before retrying
-            if (attempt < maxRetries) {
-                await new Promise(resolve => setTimeout(resolve, retryDelay = retryDelay * 2));
-            }
         } catch (error) {
             console.error(`Error fetching specific status check on attempt ${attempt}:`, error);
-
-            // If this isn't the last attempt, wait before retrying
+        }
+        finally {
+            // If this isn't the last attempt, wait before retrying.
             if (attempt < maxRetries) {
-                await new Promise(resolve => setTimeout(resolve, retryDelay = retryDelay * 2));
+                retryDelay = retryDelay * 2;
+                await new Promise(resolve => setTimeout(resolve, retryDelay));
+
             }
         }
-    }
 
-    console.warn(`Failed to find status check "${checkName}" after ${maxRetries} attempts`);
-    return null;
+        console.warn(`Failed to find status check "${checkName}" after ${maxRetries} attempts`);
+        return null;
+    }
 }

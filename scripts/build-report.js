@@ -1,4 +1,4 @@
-import { extractRepoInfo, getLatestPrCommit, getSpecificStatusCheck } from './pr-helpers.js';
+import { extractRepoInfo, getPrInfo, getSpecificStatusCheck } from './pr-helpers.js';
 
 // Gets preview URL for a file from the build report.
 export async function getPreviewUrl(fileName) {
@@ -9,13 +9,13 @@ export async function getPreviewUrl(fileName) {
         }
 
         // Get the latest commit SHA.
-        const commitSha = await getLatestPrCommit(
+        const prInfo = await getPrInfo(
             repoInfo.owner,
             repoInfo.repo,
             repoInfo.prNumber
         );
 
-        if (!commitSha) {
+        if (!prInfo || !prInfo.commitSha) {
             return null;
         }
 
@@ -23,7 +23,7 @@ export async function getPreviewUrl(fileName) {
         const opsCheck = await getSpecificStatusCheck(
             repoInfo.owner,
             repoInfo.repo,
-            commitSha,
+            prInfo.commitSha,
             "OpenPublishing.Build"
         );
 

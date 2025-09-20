@@ -120,8 +120,11 @@ function isKnownOpsRepo(owner, repo) {
     // List of known OPS repositories outside of MicrosoftDocs.
     const knownOpsRepos = [
         { owner: 'dotnet', repo: 'docs' },
+        { owner: 'dotnet', repo: 'dotnet-api-docs' },
         { owner: 'dotnet', repo: 'docs-aspire' },
         { owner: 'dotnet', repo: 'docs-desktop' },
+        { owner: 'dotnet', repo: 'docs-maui' },
+        { owner: 'dotnet', repo: 'aspNetCore.Docs' }
         // ...
     ];
 

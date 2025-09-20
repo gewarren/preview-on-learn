@@ -1,19 +1,19 @@
 import { isOpsRepo, isDifferentRepo } from './repo.js';
 import { initializeOctokit } from './octokit.js';
-import { extractRepoInfo, getLatestPrCommit, getSpecificStatusCheck } from './pr-helpers.js';
+import { extractRepoInfo, getPrInfo, getSpecificStatusCheck } from './pr-helpers.js';
 import { getPreviewUrl } from './build-report.js';
 import { setUpObservers, setUpNavigationListeners, setUpTokenObserver, setUpNoTokenObserver } from './observers.js';
 import { hasGitHubToken } from './auth.js';
 
 export const CSS_SELECTOR = '.js-file-header-dropdown a[aria-label="Delete this file"], .js-file-header-dropdown button[aria-label="You must be signed in and have push access to delete this file."]';
 const INVALID_TOKEN_MESSAGE = "You haven't entered a GitHub token or the token you entered is invalid. Go to Extensions > Preview on Learn and enter a valid PAT. The PAT should have 'repo' scope and be configured for SSO.";
-const NO_PREVIEW_URL = "No preview URL is available for this file, possibly because it isn't published on learn.microsoft.com.";
+const NO_PREVIEW_URL = "No preview URL is available for this file";
 const NO_OPS_BUILD_FOUND = "No OPS build status check was found";
 const OPS_BUILD_PENDING = "The OPS build is still in progress";
 const OPS_BUILD_FAILED = "The OPS build failed";
 const NO_OPS_DETAILS_URL = "The OPS details URL isn't available";
 
-// Helper function to remove all existing Preview on Learn buttons
+// Helper function to remove all existing Preview on Learn buttons.
 function removeAllButtons() {
   const existingButtons = document.querySelectorAll('.preview-on-learn');
   existingButtons.forEach(button => {
@@ -23,44 +23,55 @@ function removeAllButtons() {
     }
     button.remove();
   });
-  console.log(`Removed ${existingButtons.length} existing buttons`);
 }
 
 // Shared state for button conditions.
 const sharedButtonState = {
   latestCommitSha: null,
   lastBuildStatus: null,
+  prStatus: null, // 'open', 'closed', or 'merged'.
   isDisabled: false,
   disabledReason: "",
   lastCheckTime: 0
 };
 
+// Reset shared state when navigating to a different PR
+function resetSharedButtonState() {
+  sharedButtonState.latestCommitSha = null;
+  sharedButtonState.lastBuildStatus = null;
+  sharedButtonState.prStatus = null;
+  sharedButtonState.isDisabled = false;
+  sharedButtonState.disabledReason = "";
+  sharedButtonState.lastCheckTime = 0;
+  console.log("Reset shared button state for navigation");
+}
+
 // Checks and updates shared button state.
 // This function should only be called on OPS repos.
 async function checkSharedButtonState() {
-  // Check if user has a GitHub token first
-  const hasToken = await hasGitHubToken();
-  if (!hasToken) {
-    sharedButtonState.isDisabled = true;
-    sharedButtonState.disabledReason = INVALID_TOKEN_MESSAGE;
-    return sharedButtonState;
-  }
-
-  // Only check once every 15 seconds to avoid too many API calls.
-  const now = Date.now();
-  if (now - sharedButtonState.lastCheckTime < 15000) {
-    return sharedButtonState;
-  }
-
-  // Check that we're still on a PR files page.
-  if (!isPrFilesPage()) {
-    return null;
-  }
-
-  sharedButtonState.lastCheckTime = now;
-  console.log("Checking button state...");
-
   try {
+    // Check if user has a GitHub token first.
+    const hasToken = await hasGitHubToken();
+    if (!hasToken) {
+      sharedButtonState.isDisabled = true;
+      sharedButtonState.disabledReason = INVALID_TOKEN_MESSAGE;
+      return sharedButtonState;
+    }
+
+    // Only check once every 15 seconds to avoid too many API calls.
+    const now = Date.now();
+    if (now - sharedButtonState.lastCheckTime < 15000) {
+      return sharedButtonState;
+    }
+
+    // Check that we're still on a PR files page.
+    if (!isPrFilesPage()) {
+      return null;
+    }
+
+    sharedButtonState.lastCheckTime = now;
+    console.log("Checking button state...");
+
     // Get repo info.
     const repoInfo = extractRepoInfo();
     if (!repoInfo) {
@@ -69,23 +80,50 @@ async function checkSharedButtonState() {
       return sharedButtonState;
     }
 
-    // Check the latest commit.
-    const currentCommitSha = await getLatestPrCommit(
+    // Check the latest commit and PR status.
+    const prInfo = await getPrInfo(
       repoInfo.owner,
       repoInfo.repo,
       repoInfo.prNumber
     );
 
-    if (!currentCommitSha) {
+    if (!prInfo) {
       sharedButtonState.isDisabled = true;
       sharedButtonState.disabledReason = "Could not determine latest commit";
       return sharedButtonState;
     }
 
+    const { commitSha: currentCommitSha, prStatus } = prInfo;
+
+    // Check if PR status changed.
+    if (prStatus !== sharedButtonState.prStatus) {
+      console.log(`PR status changed from ${sharedButtonState.prStatus} to ${prStatus}`);
+      sharedButtonState.prStatus = prStatus;
+    }
+
+    // If PR is closed, disable buttons and skip build checks.
+    if (prStatus === 'closed') {
+      sharedButtonState.isDisabled = true;
+      sharedButtonState.disabledReason = "Pull request is closed";
+      return sharedButtonState;
+    }
+
+    // For merged PRs, we'll still check for preview URLs like open PRs
+    // but we won't check build status since merged PRs don't get new builds
+
     if (currentCommitSha !== sharedButtonState.latestCommitSha) {
-      // Commit SHA has changed, update it and check build status
+      // Commit SHA has changed, update it and check build status.
       console.log(`Commit SHA changed from ${sharedButtonState.latestCommitSha} to ${currentCommitSha}`);
       sharedButtonState.latestCommitSha = currentCommitSha;
+
+      // For merged PRs, skip build status checks and enable buttons
+      // Individual buttons will be disabled if no preview URL is found
+      if (prStatus === 'merged') {
+        sharedButtonState.isDisabled = false;
+        sharedButtonState.disabledReason = "";
+        sharedButtonState.lastBuildStatus = "merged"; // Use special status
+        return sharedButtonState;
+      }
 
       // Check build status for the new commit.
       const opsCheck = await getSpecificStatusCheck(
@@ -96,6 +134,7 @@ async function checkSharedButtonState() {
       );
 
       if (!opsCheck) {
+        console.log("No OPS build check found, disabling buttons");
         sharedButtonState.isDisabled = true;
         sharedButtonState.disabledReason = NO_OPS_BUILD_FOUND;
         sharedButtonState.lastBuildStatus = null;
@@ -121,6 +160,11 @@ async function checkSharedButtonState() {
       sharedButtonState.lastBuildStatus = opsCheck.status;
       return sharedButtonState;
     } else if (sharedButtonState.lastBuildStatus === "pending") {
+      // For merged PRs, skip build status checks
+      if (prStatus === 'merged') {
+        return sharedButtonState;
+      }
+
       console.log("Commit SHA hasn't changed but build status is pending");
 
       // Check if build status changed from pending to success/failure.
@@ -162,11 +206,49 @@ async function checkSharedButtonState() {
 
       sharedButtonState.lastBuildStatus = currentBuildStatus;
       return sharedButtonState;
+    } else if (!sharedButtonState.lastBuildStatus || sharedButtonState.isDisabled) {
+      // For merged PRs, skip build status checks
+      if (prStatus === 'merged') {
+        return sharedButtonState;
+      }
+
+      // Force a recheck if we don't have a valid build status or if buttons are currently disabled.
+      const opsCheck = await getSpecificStatusCheck(
+        repoInfo.owner,
+        repoInfo.repo,
+        currentCommitSha,
+        "OpenPublishing.Build"
+      );
+
+      if (!opsCheck) {
+        sharedButtonState.isDisabled = true;
+        sharedButtonState.disabledReason = NO_OPS_BUILD_FOUND;
+        sharedButtonState.lastBuildStatus = null;
+        return sharedButtonState;
+      }
+
+      // Update state based on current build status.
+      if (opsCheck.status === "pending") {
+        sharedButtonState.isDisabled = true;
+        sharedButtonState.disabledReason = OPS_BUILD_PENDING;
+      } else if (opsCheck.status !== "success") {
+        sharedButtonState.isDisabled = true;
+        sharedButtonState.disabledReason = OPS_BUILD_FAILED;
+      } else if (!opsCheck.details_url) {
+        sharedButtonState.isDisabled = true;
+        sharedButtonState.disabledReason = NO_OPS_DETAILS_URL;
+      } else {
+        // Build was successful.
+        sharedButtonState.isDisabled = false;
+        sharedButtonState.disabledReason = "";
+      }
+
+      sharedButtonState.lastBuildStatus = opsCheck.status;
+      return sharedButtonState;
     }
 
     // If we get here, nothing has changed (status or commit SHA), so return existing status.
     return sharedButtonState;
-
   } catch (error) {
     console.error("Error in checkButtonState:", error);
     sharedButtonState.isDisabled = true;
@@ -178,7 +260,7 @@ async function checkSharedButtonState() {
 // Updates an single button's state.
 // This is called from the interval observer and the mutation observer.
 async function updateButtonState(button, state) {
-  console.log(`Updating button. Current disabled state is ${state.isDisabled}`);
+  console.log(`Updating button. Current disabled state is ${state.isDisabled}, reason: ${state.disabledReason}`);
 
   const isNowDisabled = state.isDisabled;
   let disabledReason = state.disabledReason;
@@ -191,59 +273,69 @@ async function updateButtonState(button, state) {
     return;
   }
 
-  console.log(`Changing button state from ${currentlyDisabled} to ${isNowDisabled} or changing disabled reason`);
+  // If the shared state says the button should be disabled, always respect that.
+  if (isNowDisabled) {
+    button.classList.add('disabled');
+    button.disabled = true;
 
-  if (!isNowDisabled) {
-    // Try to get preview URL.
-    const filePathElement = button.closest('[data-path]');
-    if (filePathElement) {
-      const linkElement = filePathElement.querySelector(".Link--primary");
-      const fullText = linkElement?.textContent;
+    // Add tooltip with reason.
+    if (disabledReason) {
+      button.disabledReason = disabledReason;
+      button.title = disabledReason;
+    }
+    return;
+  }
 
-      // Try to extract filename from text content first (handles renames with "old → new")
-      let fileName = fullText?.split(" → ").pop();
+  // Button should be enabled, try to get/update preview URL.
+  const filePathElement = button.closest('[data-path]');
+  if (filePathElement) {
+    const linkElement = filePathElement.querySelector(".Link--primary");
+    const fullText = linkElement?.textContent;
 
-      // If we still don't have a valid filename or it looks truncated, use data-path
-      if (!fileName || fileName.includes('…') || fileName.startsWith('...')) {
-        const dataPath = filePathElement.getAttribute('data-path');
-        if (dataPath) {
-          fileName = dataPath; // Use the full path from data-path
-          console.log("Using full path from data-path:", fileName);
-        }
+    // Try to extract filename from text content first (handles renames with "old → new").
+    let fileName = fullText?.split(" → ").pop();
+
+    // If filename is invalid or looks truncated, use data-path.
+    if (!fileName || fileName.includes('…') || fileName.startsWith('...')) {
+      const dataPath = filePathElement.getAttribute('data-path');
+      if (dataPath) {
+        fileName = dataPath;
       }
+    }
 
-      if (fileName) {
-        try {
-          // Await the preview URL
-          const previewUrl = await getPreviewUrl(fileName);
+    if (fileName) {
+      try {
+        // Await the preview URL.
+        console.log(`Attempting to get preview URL for '${fileName}' on ${state.prStatus} PR`);
+        const previewUrl = await getPreviewUrl(fileName);
 
-          if (previewUrl) {
-            console.log(`Adding preview URL to ${fileName}`);
-            button.title = previewUrl;
-            button.dataset.previewUrl = previewUrl;
+        if (previewUrl) {
+          console.log(`Adding preview URL to ${fileName}: ${previewUrl}`);
+          button.title = previewUrl;
+          button.dataset.previewUrl = previewUrl;
 
-            // Enable the button and return;
-            button.disabled = false;
-            return;
-          } else {
-            // Likely an unpublished file (e.g. docfx.json).
-            console.log(`No preview URL found for '${fileName}'`);
-            disabledReason = NO_PREVIEW_URL;
-          }
-        } catch (error) {
-          console.error('Error getting preview URL:', error);
+          // Enable the button and return.
+          button.disabled = false;
+          button.classList.remove('disabled');
+          return;
+        } else {
+          // Likely an unpublished file (e.g. docfx.json).
+          console.log(`No preview URL found for '${fileName}' on ${state.prStatus} PR`);
           disabledReason = NO_PREVIEW_URL;
         }
+      } catch (error) {
+        console.error(`Error getting preview URL for '${fileName}' on ${state.prStatus} PR:`, error);
+        disabledReason = NO_PREVIEW_URL;
       }
     }
   }
 
-  // Button needs to be disabled if we get here.
-
+  // If we get here, button should be disabled (no preview URL found).
+  console.log(`Disabling button for ${state.prStatus} PR because: ${disabledReason}`);
   button.classList.add('disabled');
   button.disabled = true;
 
-  // Add tooltip with reason
+  // Add tooltip with reason.
   if (disabledReason) {
     button.disabledReason = disabledReason;
     button.title = disabledReason;
@@ -267,10 +359,9 @@ async function updateAllButtons() {
 
 function addButton(showCommentsMenuItem, isDisabled = false, disabledReason = "") {
   try {
-    // Check if a button already exists in this dropdown
+    // Check if a button already exists in this dropdown.
     const dropdown = showCommentsMenuItem.closest('.js-file-header-dropdown');
     if (dropdown && dropdown.querySelector('.preview-on-learn')) {
-      console.log('Preview button already exists in this dropdown, skipping');
       return;
     }
 
@@ -304,15 +395,14 @@ function addButton(showCommentsMenuItem, isDisabled = false, disabledReason = ""
         const linkElement = filePathElement.querySelector(".Link--primary");
         const fullText = linkElement?.textContent;
 
-        // Try to extract filename from text content first (handles renames with "old → new")
+        // Try to extract filename from text content first (handles renames with "old → new").
         let fileName = fullText?.split(" → ").pop();
 
-        // If we still don't have a valid filename or it looks truncated, use data-path
+        // If filename is invalid or looks truncated, use data-path.
         if (!fileName || fileName.includes('…') || fileName.startsWith('...')) {
           const dataPath = filePathElement.getAttribute('data-path');
           if (dataPath) {
-            fileName = dataPath; // Use the full path from data-path
-            console.log("Using full path from data-path (addButton):", fileName);
+            fileName = dataPath;
           }
         }
 
@@ -358,7 +448,7 @@ async function addInitialMenuItems() {
       return;
     }
 
-    // Remove any existing buttons first to prevent duplicates
+    // Remove any existing buttons first to prevent duplicates.
     removeAllButtons();
 
     // Check shared button state.
@@ -418,12 +508,12 @@ async function init() {
       }
     );
 
-    // Function to check and add buttons if on PR files page
+    // Function to check and add buttons if on PR files page.
     async function checkAndAddNoTokenButtons() {
       if (isPrFilesPage()) {
         const isOps = await isOpsRepo();
         if (isOps) {
-          // Remove any existing buttons first
+          // Remove any existing buttons first.
           removeAllButtons();
 
           // Add disabled buttons with token message for existing dropdowns.
@@ -432,13 +522,13 @@ async function init() {
             addButton(item, true, INVALID_TOKEN_MESSAGE);
           });
 
-          // Set up observer for new dropdowns that appear dynamically (if not already set up)
+          // Set up observer for new dropdowns that appear dynamically (if not already set up).
           if (!cleanupNoTokenObserver) {
             cleanupNoTokenObserver = setUpNoTokenObserver(addButton, INVALID_TOKEN_MESSAGE);
           }
         }
       } else {
-        // Clean up observer if we're not on files page
+        // Clean up observer if we're not on files page.
         if (cleanupNoTokenObserver) {
           cleanupNoTokenObserver();
           cleanupNoTokenObserver = null;
@@ -446,11 +536,13 @@ async function init() {
       }
     }
 
-    // Check initially
+    // Check initially.
     await checkAndAddNoTokenButtons();
 
-    // Set up navigation listeners to detect when user navigates to/from files page
+    // Set up navigation listeners to detect when user navigates to/from files page.
     cleanupNoTokenNavigation = setUpNavigationListeners(async () => {
+      // Reset state when navigating
+      resetSharedButtonState();
       await checkAndAddNoTokenButtons();
     });
 
@@ -486,34 +578,43 @@ async function fullInit() {
   // Set up navigation listeners for GitHub's SPA behavior.
   const cleanupNavigation = setUpNavigationListeners(() => {
     isDifferentRepo();
+
+    // Reset state when navigating to ensure we don't carry over previous PR state
+    resetSharedButtonState();
+
+    // If user navigates to a files page, restart interval in case PR status changed.
+    if (isPrFilesPage()) {
+      observers.startInterval();
+    }
   });
 
-  // Set up token observer to handle token removal
+  // Set up token observer to handle token removal,
   const cleanupTokenObserver = setUpTokenObserver(
     async () => {
       // Token was added (shouldn't happen in fullInit, but handle it)
       console.log("Token was added while extension was running");
     },
     async () => {
-      // Token was removed - go back to initial state
+      // Token was removed - go back to initial state.
       console.log("GitHub token was removed, reverting to initial state");
 
-      // Clean up current observers
+      // Clean up current observers.
       observers.fileObserver.disconnect();
-      clearInterval(observers.commitCheckInterval);
+      observers.stopInterval();
       cleanupNavigation();
 
-      // Remove all existing buttons
+      // Remove all existing buttons.
       removeAllButtons();
 
-      // Clear shared state
+      // Clear shared state.
       sharedButtonState.latestCommitSha = null;
       sharedButtonState.lastBuildStatus = null;
+      sharedButtonState.prStatus = null;
       sharedButtonState.isDisabled = false;
       sharedButtonState.disabledReason = "";
       sharedButtonState.lastCheckTime = 0;
 
-      // Reinitialize in no-token mode
+      // Reinitialize in no-token mode.
       await init();
     }
   );
@@ -521,11 +622,10 @@ async function fullInit() {
   // Clean up when navigating away.
   window.addEventListener('beforeunload', () => {
     observers.fileObserver.disconnect();
-    clearInterval(observers.commitCheckInterval);
+    observers.stopInterval();
     cleanupNavigation();
     cleanupTokenObserver();
   });
 }
 
 init();
-
