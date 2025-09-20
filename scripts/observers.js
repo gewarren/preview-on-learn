@@ -1,5 +1,6 @@
 import { isOpsRepo } from './repo.js';
 import { extractRepoInfo } from './pr-helpers.js';
+import { CSS_SELECTOR } from './content.js';
 
 // Set up observers to watch for DOM changes.
 export function setUpObservers(updateAllButtons, checkButtonState, addButton, updateButtonState) {
@@ -20,74 +21,12 @@ export function setUpObservers(updateAllButtons, checkButtonState, addButton, up
         }
     }, 15000); // Check every 15 seconds
 
-    // Observer for file header dropdown additions.
-    // TODO - do we need this??
-    const fileObserver = new MutationObserver(async mutations => {
-        for (const mutation of mutations) {
-            // Only interested in added nodes.
-            if (mutation.type !== 'childList' || mutation.addedNodes.length === 0) {
-                continue;
-            }
-
-            // Check each added node.
-            for (const node of mutation.addedNodes) {
-                if (!(node instanceof HTMLElement)) {
-                    continue;
-                }
-
-                // Check if a dropdown menu was added.
-                const dropdowns = node.classList?.contains('js-file-header-dropdown')
-                    ? [node]
-                    : [...node.querySelectorAll('.js-file-header-dropdown')];
-
-                if (dropdowns.length > 0) {
-                    console.log('Detected new file dropdown(s):', dropdowns.length);
-
-                    // Check if this is an OPS repo first
-                    const isOps = await isOpsRepo();
-                    if (!isOps) {
-                        console.log('Not an OPS repo, skipping button addition');
-                        return;
-                    }
-
-                    // Get current button state once for all dropdowns
-                    const state = await checkButtonState();
-
-                    // Find menu items in each dropdown that we want to add our button after.
-                    for (const dropdown of dropdowns) {
-                        const menuItems = dropdown.querySelectorAll('a[aria-label="Delete this file"], button[aria-label="You must be signed in and have push access to delete this file."]');
-                        if (menuItems.length > 0) {
-                            console.log('Found menu items to modify');
-                            menuItems.forEach(item => {
-                                // Check if we've already added our button to this menu.
-                                const previewButton = dropdown.querySelector('.preview-on-learn');
-                                if (!previewButton) {
-                                    addButton(item, state.isDisabled, state.disabledReason);
-                                } else {
-                                    updateButtonState(previewButton, state);
-                                }
-                            });
-                        }
-                    }
-                }
-            }
-        }
-    });
-
-    // Start observing the whole document for file changes.
-    fileObserver.observe(document.body, {
-        childList: true,
-        subtree: true
-    });
-
     // Update the init function to clean up all intervals
     window.addEventListener('beforeunload', () => {
-        fileObserver.disconnect();
         clearInterval(commitCheckInterval);
     });
 
     return {
-        fileObserver,
         commitCheckInterval
     };
 }
@@ -174,5 +113,60 @@ export function setUpTokenObserver(onTokenAdded, onTokenRemoved) {
     // Return cleanup function
     return function cleanup() {
         chrome.storage.onChanged.removeListener(tokenListener);
+    };
+}
+
+// Set up observer for when no GitHub token is present
+export function setUpNoTokenObserver(addButton, invalidTokenMessage) {
+    const noTokenObserver = new MutationObserver(async (mutations) => {
+        for (const mutation of mutations) {
+            if (mutation.type !== 'childList' || mutation.addedNodes.length === 0) {
+                continue;
+            }
+
+            for (const node of mutation.addedNodes) {
+                if (!(node instanceof HTMLElement)) {
+                    continue;
+                }
+
+                // Check if a dropdown menu was added.
+                const dropdowns = node.classList?.contains('js-file-header-dropdown')
+                    ? [node]
+                    : [...node.querySelectorAll('.js-file-header-dropdown')];
+
+                if (dropdowns.length > 0) {
+                    // Check if this is an OPS repo first
+                    const isOps = await isOpsRepo();
+                    if (!isOps) {
+                        continue;
+                    }
+
+                    // Add disabled buttons to new dropdowns
+                    for (const dropdown of dropdowns) {
+                        const menuItems = dropdown.querySelectorAll(CSS_SELECTOR);
+                        if (menuItems.length > 0) {
+                            menuItems.forEach(item => {
+                                // Check if we've already added our button to this dropdown
+                                const previewButton = dropdown.querySelector('.preview-on-learn');
+                                if (!previewButton) {
+                                    addButton(item, true, invalidTokenMessage);
+                                }
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    // Start observing for new dropdowns
+    noTokenObserver.observe(document.body, {
+        childList: true,
+        subtree: true
+    });
+
+    // Return cleanup function
+    return function cleanup() {
+        noTokenObserver.disconnect();
     };
 }

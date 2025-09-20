@@ -2,9 +2,10 @@ import { isOpsRepo, isDifferentRepo } from './repo.js';
 import { initializeOctokit } from './octokit.js';
 import { extractRepoInfo, getLatestPrCommit, getSpecificStatusCheck } from './pr-helpers.js';
 import { getPreviewUrl } from './build-report.js';
-import { setUpObservers, setUpNavigationListeners, setUpTokenObserver } from './observers.js';
+import { setUpObservers, setUpNavigationListeners, setUpTokenObserver, setUpNoTokenObserver } from './observers.js';
 import { hasGitHubToken } from './auth.js';
 
+export const CSS_SELECTOR = '.js-file-header-dropdown a[aria-label="Delete this file"], .js-file-header-dropdown button[aria-label="You must be signed in and have push access to delete this file."]';
 const INVALID_TOKEN_MESSAGE = "You haven't entered a GitHub token or the token you entered is invalid. Go to Extensions > Preview on Learn and enter a valid PAT. The PAT should have 'repo' scope and be configured for SSO.";
 const NO_PREVIEW_URL = "No preview URL is available for this file, possibly because it isn't published on learn.microsoft.com.";
 const NO_OPS_BUILD_FOUND = "No OPS build status check was found";
@@ -338,8 +339,7 @@ async function addInitialMenuItems() {
     const state = await checkSharedButtonState();
 
     // Add "Preview on Learn" menu item after "Delete file" menu item.
-    let cssSelector = '.js-file-header-dropdown a[aria-label="Delete this file"], .js-file-header-dropdown button[aria-label="You must be signed in and have push access to delete this file."]';
-    const deleteFileItems = document.querySelectorAll(cssSelector);
+    const deleteFileItems = document.querySelectorAll(CSS_SELECTOR);
     deleteFileItems.forEach(item => {
       addButton(item, state.isDisabled, state.disabledReason);
     });
@@ -360,7 +360,10 @@ async function init() {
   const hasToken = await hasGitHubToken();
 
   if (!hasToken) {
-    console.log("No GitHub token found, setting up token observer only");
+    console.log("No GitHub token found.");
+
+    let cleanupNoTokenObserver = null;
+    let cleanupNoTokenNavigation = null;
 
     // Only set up token observer to wait for token to be entered.
     const cleanupTokenObserver = setUpTokenObserver(
@@ -369,8 +372,14 @@ async function init() {
         // Token was added, reinitialize the extension.
         await initializeOctokit();
 
-        // Clean up the token-only observer.
+        // Clean up the token-only observer, no-token observer, and navigation listeners.
         cleanupTokenObserver();
+        if (cleanupNoTokenObserver) {
+          cleanupNoTokenObserver();
+        }
+        if (cleanupNoTokenNavigation) {
+          cleanupNoTokenNavigation();
+        }
 
         // Remove existing disabled buttons.
         removeAllButtons();
@@ -383,22 +392,51 @@ async function init() {
       }
     );
 
-    // Add disabled buttons if we're on a PR files page and it's an OPS repo.
-    if (isPrFilesPage()) {
-      const isOps = await isOpsRepo();
-      if (isOps) {
-        // Add disabled buttons with token message.
-        const cssSelector = '.js-file-header-dropdown a[aria-label="Delete this file"], .js-file-header-dropdown button[aria-label="You must be signed in and have push access to delete this file."]';
-        const deleteFileItems = document.querySelectorAll(cssSelector);
-        deleteFileItems.forEach(item => {
-          addButton(item, true, INVALID_TOKEN_MESSAGE);
-        });
+    // Function to check and add buttons if on PR files page
+    async function checkAndAddNoTokenButtons() {
+      if (isPrFilesPage()) {
+        const isOps = await isOpsRepo();
+        if (isOps) {
+          // Remove any existing buttons first
+          removeAllButtons();
+
+          // Add disabled buttons with token message for existing dropdowns.
+          const deleteFileItems = document.querySelectorAll(CSS_SELECTOR);
+          deleteFileItems.forEach(item => {
+            addButton(item, true, INVALID_TOKEN_MESSAGE);
+          });
+
+          // Set up observer for new dropdowns that appear dynamically (if not already set up)
+          if (!cleanupNoTokenObserver) {
+            cleanupNoTokenObserver = setUpNoTokenObserver(addButton, INVALID_TOKEN_MESSAGE);
+          }
+        }
+      } else {
+        // Clean up observer if we're not on files page
+        if (cleanupNoTokenObserver) {
+          cleanupNoTokenObserver();
+          cleanupNoTokenObserver = null;
+        }
       }
     }
+
+    // Check initially
+    await checkAndAddNoTokenButtons();
+
+    // Set up navigation listeners to detect when user navigates to/from files page
+    cleanupNoTokenNavigation = setUpNavigationListeners(async () => {
+      await checkAndAddNoTokenButtons();
+    });
 
     // Clean up when navigating away.
     window.addEventListener('beforeunload', () => {
       cleanupTokenObserver();
+      if (cleanupNoTokenObserver) {
+        cleanupNoTokenObserver();
+      }
+      if (cleanupNoTokenNavigation) {
+        cleanupNoTokenNavigation();
+      }
     });
 
     return;
@@ -435,7 +473,6 @@ async function fullInit() {
       console.log("GitHub token was removed, reverting to initial state");
 
       // Clean up current observers
-      observers.fileObserver.disconnect();
       clearInterval(observers.commitCheckInterval);
       cleanupNavigation();
 
@@ -456,7 +493,6 @@ async function fullInit() {
 
   // Clean up when navigating away.
   window.addEventListener('beforeunload', () => {
-    observers.fileObserver.disconnect();
     clearInterval(observers.commitCheckInterval);
     cleanupNavigation();
     cleanupTokenObserver();

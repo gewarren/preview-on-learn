@@ -14,15 +14,14 @@ export async function initializeOctokit() {
             console.log("Using authenticated GitHub API");
             octokit = new Octokit({ auth: token });
         } else {
-            console.log("No GitHub token found, using unauthenticated API");
-            octokit = new Octokit();
+            console.log("No GitHub token found");
+            octokit = null;
         }
 
         return octokit;
     } catch (error) {
         console.error("Error initializing Octokit:", error);
-        // Fall back to unauthenticated.
-        octokit = new Octokit();
+        octokit = null;
         return octokit;
     }
 }
