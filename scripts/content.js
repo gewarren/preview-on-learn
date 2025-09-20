@@ -216,18 +216,11 @@ async function updateButtonState(button, state) {
         try {
           // Await the preview URL
           const previewUrl = await getPreviewUrl(fileName);
-          console.log(`Preview URL result for '${fileName}':`, previewUrl);
 
           if (previewUrl) {
             console.log(`Adding preview URL to ${fileName}`);
             button.title = previewUrl;
             button.dataset.previewUrl = previewUrl;
-
-            // Add click handler.
-            button.addEventListener(
-              'click',
-              () => window.open(previewUrl, '_blank'),
-              { capture: true });
 
             // Enable the button and return;
             button.disabled = false;
@@ -325,7 +318,6 @@ function addButton(showCommentsMenuItem, isDisabled = false, disabledReason = ""
 
         if (fileName) {
           getPreviewUrl(fileName).then(previewUrl => {
-            console.log(`Preview URL result for '${fileName}' (addButton):`, previewUrl);
             if (previewUrl && !menuItem.disabled) {
               menuItem.title = previewUrl;
               menuItem.dataset.previewUrl = previewUrl;
@@ -335,14 +327,16 @@ function addButton(showCommentsMenuItem, isDisabled = false, disabledReason = ""
           });
         }
       }
-
-      // Add event listener.
-      menuItem.addEventListener('click', function () {
-        if (menuItem.dataset.previewUrl) {
-          window.open(menuItem.dataset.previewUrl, '_blank');
-        }
-      }, { capture: true });
     }
+
+    // Add event listener to ALL buttons (enabled or disabled).
+    menuItem.addEventListener('click', function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (menuItem.dataset.previewUrl) {
+        window.open(menuItem.dataset.previewUrl, '_blank');
+      }
+    }, { capture: true });
 
     // Add new button to menu below divider.
     divider.after(menuItem);
