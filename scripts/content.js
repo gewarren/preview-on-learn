@@ -197,11 +197,27 @@ async function updateButtonState(button, state) {
     // Try to get preview URL.
     const filePathElement = button.closest('[data-path]');
     if (filePathElement) {
-      const fileName = filePathElement.querySelector(".Link--primary")?.textContent?.split(" → ").pop();
+      const linkElement = filePathElement.querySelector(".Link--primary");
+      const fullText = linkElement?.textContent;
+
+      // Try to extract filename from text content first (handles renames with "old → new")
+      let fileName = fullText?.split(" → ").pop();
+
+      // If we still don't have a valid filename or it looks truncated, use data-path
+      if (!fileName || fileName.includes('…') || fileName.startsWith('...')) {
+        const dataPath = filePathElement.getAttribute('data-path');
+        if (dataPath) {
+          fileName = dataPath; // Use the full path from data-path
+          console.log("Using full path from data-path:", fileName);
+        }
+      }
+
       if (fileName) {
         try {
           // Await the preview URL
           const previewUrl = await getPreviewUrl(fileName);
+          console.log(`Preview URL result for '${fileName}':`, previewUrl);
+
           if (previewUrl) {
             console.log(`Adding preview URL to ${fileName}`);
             button.title = previewUrl;
@@ -218,6 +234,7 @@ async function updateButtonState(button, state) {
             return;
           } else {
             // Likely an unpublished file (e.g. docfx.json).
+            console.log(`No preview URL found for '${fileName}'`);
             disabledReason = NO_PREVIEW_URL;
           }
         } catch (error) {
@@ -291,15 +308,30 @@ function addButton(showCommentsMenuItem, isDisabled = false, disabledReason = ""
       // Get and store the preview URL.
       const filePathElement = showCommentsMenuItem.closest('[data-path]');
       if (filePathElement) {
-        const fileName = filePathElement.querySelector(".Link--primary")?.textContent?.split(" → ").pop();
+        const linkElement = filePathElement.querySelector(".Link--primary");
+        const fullText = linkElement?.textContent;
+
+        // Try to extract filename from text content first (handles renames with "old → new")
+        let fileName = fullText?.split(" → ").pop();
+
+        // If we still don't have a valid filename or it looks truncated, use data-path
+        if (!fileName || fileName.includes('…') || fileName.startsWith('...')) {
+          const dataPath = filePathElement.getAttribute('data-path');
+          if (dataPath) {
+            fileName = dataPath; // Use the full path from data-path
+            console.log("Using full path from data-path (addButton):", fileName);
+          }
+        }
+
         if (fileName) {
           getPreviewUrl(fileName).then(previewUrl => {
+            console.log(`Preview URL result for '${fileName}' (addButton):`, previewUrl);
             if (previewUrl && !menuItem.disabled) {
               menuItem.title = previewUrl;
               menuItem.dataset.previewUrl = previewUrl;
             }
-          }).catch(() => {
-            console.warn("Error while getting preview URL.");
+          }).catch((error) => {
+            console.warn("Error while getting preview URL:", error);
           });
         }
       }
@@ -473,6 +505,7 @@ async function fullInit() {
       console.log("GitHub token was removed, reverting to initial state");
 
       // Clean up current observers
+      observers.fileObserver.disconnect();
       clearInterval(observers.commitCheckInterval);
       cleanupNavigation();
 
@@ -493,6 +526,7 @@ async function fullInit() {
 
   // Clean up when navigating away.
   window.addEventListener('beforeunload', () => {
+    observers.fileObserver.disconnect();
     clearInterval(observers.commitCheckInterval);
     cleanupNavigation();
     cleanupTokenObserver();

@@ -21,12 +21,73 @@ export function setUpObservers(updateAllButtons, checkButtonState, addButton, up
         }
     }, 15000); // Check every 15 seconds
 
+    // Observer for file header dropdown additions when user has a token
+    const fileObserver = new MutationObserver(async mutations => {
+        for (const mutation of mutations) {
+            // Only interested in added nodes.
+            if (mutation.type !== 'childList' || mutation.addedNodes.length === 0) {
+                continue;
+            }
+
+            // Check each added node.
+            for (const node of mutation.addedNodes) {
+                if (!(node instanceof HTMLElement)) {
+                    continue;
+                }
+
+                // Check if a dropdown menu was added.
+                const dropdowns = node.classList?.contains('js-file-header-dropdown')
+                    ? [node]
+                    : [...node.querySelectorAll('.js-file-header-dropdown')];
+
+                if (dropdowns.length > 0) {
+                    console.log('Detected new file dropdown(s):', dropdowns.length);
+
+                    // Check if this is an OPS repo first
+                    const isOps = await isOpsRepo();
+                    if (!isOps) {
+                        console.log('Not an OPS repo, skipping button addition');
+                        return;
+                    }
+
+                    // Get current button state once for all dropdowns
+                    const state = await checkButtonState();
+
+                    // Find menu items in each dropdown that we want to add our button after.
+                    for (const dropdown of dropdowns) {
+                        const menuItems = dropdown.querySelectorAll('.js-file-header-dropdown a[aria-label="Delete this file"], .js-file-header-dropdown button[aria-label="You must be signed in and have push access to delete this file."]');
+                        if (menuItems.length > 0) {
+                            console.log('Found menu items to modify');
+                            menuItems.forEach(item => {
+                                // Check if we've already added our button to this menu.
+                                const previewButton = dropdown.querySelector('.preview-on-learn');
+                                if (!previewButton) {
+                                    addButton(item, state.isDisabled, state.disabledReason);
+                                } else {
+                                    updateButtonState(previewButton, state);
+                                }
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    // Start observing the whole document for file changes.
+    fileObserver.observe(document.body, {
+        childList: true,
+        subtree: true
+    });
+
     // Update the init function to clean up all intervals
     window.addEventListener('beforeunload', () => {
+        fileObserver.disconnect();
         clearInterval(commitCheckInterval);
     });
 
     return {
+        fileObserver,
         commitCheckInterval
     };
 }
