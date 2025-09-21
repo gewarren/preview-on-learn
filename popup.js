@@ -48,12 +48,7 @@ document.addEventListener('DOMContentLoaded', async function () {
             tokenStepsElement.style.display = 'none';
             tokenInput.value = '';
 
-            // Send message to content script to refresh Octokit.
-            chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
-                if (tabs[0] && tabs[0].id) {
-                    chrome.tabs.sendMessage(tabs[0].id, { action: "refreshOctokit" });
-                }
-            });
+            // Note: The content script will automatically detect the token change via storage listener
         } catch (error) {
             showStatus("Error saving token: " + error.message, "error");
         }
@@ -72,12 +67,7 @@ document.addEventListener('DOMContentLoaded', async function () {
 
             showStatus("Token removed successfully!", "success");
 
-            // Send message to content script to refresh Octokit.
-            chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
-                if (tabs[0] && tabs[0].id) {
-                    chrome.tabs.sendMessage(tabs[0].id, { action: "refreshOctokit" });
-                }
-            });
+            // Note: The content script will automatically detect the token removal via storage listener
         } catch (error) {
             showStatus("Error removing token: " + error.message, "error");
         }
