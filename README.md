@@ -2,7 +2,7 @@
 
 This Microsoft Edge extension is for contributors to docs on <https://learn.microsoft.com>. It adds a direct link from each file in a GitHub pull request to its preview on <https://review.learn.microsoft.com>.
 
-[Screenshot of Preview on Learn menu item in a file diff on GitHub.](./media/pol-menu-item.png)
+![Screenshot of Preview on Learn menu item in a file diff on GitHub.](./media/pol-menu-item.png)
 
 ## Install
 
@@ -11,11 +11,11 @@ This Microsoft Edge extension is for contributors to docs on <https://learn.micr
 
    1. Select **Extensions** > **Preview on Learn**.
 
-      [Screenshot of Preview on Learn extension in Extensions dropdown menu.](./media/pol-extension.png)
+      ![Screenshot of Preview on Learn extension in Extensions dropdown menu.](./media/pol-extension.png)
 
    1. Follow the steps to create a PAT with *repo* scope, copy the token, then configure it for single sign-on (SSO).
 
-      [Screenshot of instructions to create personal access token.](./media/token-instructions.png)
+      ![Screenshot of instructions to create personal access token.](./media/token-instructions.png)
 
    1. Paste in the copied token and select **Save token**.
 
