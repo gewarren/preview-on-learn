@@ -26,8 +26,8 @@ export async function getPrInfo(owner, repo, prNumber) {
 
         if (pullRequest && pullRequest.head && pullRequest.head.sha) {
             const latestCommitSha = pullRequest.head.sha;
-            
-            // Determine PR status: GitHub API returns 'open' or 'closed', 
+
+            // Determine PR status: GitHub API returns 'open' or 'closed',
             // but we need to distinguish between 'closed' and 'merged'
             let prStatus;
             if (pullRequest.state === 'open') {
@@ -37,7 +37,7 @@ export async function getPrInfo(owner, repo, prNumber) {
             } else {
                 prStatus = 'closed';
             }
-            
+
             console.log(`Latest commit SHA: ${latestCommitSha}, PR status: ${prStatus}`);
             return {
                 commitSha: latestCommitSha,
@@ -51,23 +51,18 @@ export async function getPrInfo(owner, repo, prNumber) {
         console.error(`Error fetching PR data. Error status: ${error.status}`);
         if (error.status === 401) {
             if (error.message && error.message.includes('Bad credentials')) {
-                console.error("The PAT you entered is valid. Enter a valid PAT.");
+                console.error("The authentication token is invalid. Please sign in again.");
 
                 // Clear the invalid token from storage.
                 try {
-                    await chrome.storage.sync.remove(['githubToken']);
-                    console.log("Invalid GitHub token has been cleared from storage");
+                    await chrome.storage.sync.remove(['githubAccessToken']);
+                    console.log("Invalid GitHub access token has been cleared from storage");
                 } catch (storageError) {
                     console.error("Error clearing invalid token from storage:", storageError);
                 }
             }
         }
-        else if (error.status === 403) {
-            if (error.message && error.message.includes('SAML')) {
-                console.log("403 Forbidden error - SAML SSO authorization required:", error.message);
-                console.log("You need to authorize your Personal Access Token for this organization. Go to https://github.com/settings/tokens, find your token, click 'Configure SSO', and authorize it for the organization.");
-            }
-            // Log more details about the error for debugging.
+        else {
             console.log("Error details:", {
                 message: error.message,
                 documentation_url: error.documentation_url,

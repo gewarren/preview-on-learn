@@ -1,12 +1,11 @@
 import { isOpsRepo, isDifferentRepo } from './repo.js';
-import { initializeOctokit } from './octokit.js';
+import { initializeOctokit, isAuthenticated } from './octokit.js';
 import { extractRepoInfo, getPrInfo, getSpecificStatusCheck } from './pr-helpers.js';
 import { getPreviewUrl } from './build-report.js';
-import { setUpObservers, setUpNavigationListeners, setUpTokenObserver, setUpNoTokenObserver } from './observers.js';
-import { hasGitHubToken } from './auth.js';
+import { setUpObservers, setUpNavigationListeners, setUpNoTokenObserver } from './observers.js';
 
 export const CSS_SELECTOR = '.js-file-header-dropdown a[aria-label="Delete this file"], .js-file-header-dropdown button[aria-label="You must be signed in and have push access to delete this file."]';
-const INVALID_TOKEN_MESSAGE = "You haven't entered a GitHub token or the token you entered is invalid. Go to Extensions > Preview on Learn and enter a valid PAT. The PAT should have 'repo' scope and be configured for SSO.";
+const INVALID_TOKEN_MESSAGE = "GitHub authentication required. Select Extensions > Preview on Learn to sign in with your GitHub account.";
 const NO_PREVIEW_URL = "No preview URL is available for this file";
 const NO_OPS_BUILD_FOUND = "No OPS build status check was found";
 const OPS_BUILD_PENDING = "The OPS build is still in progress";
@@ -50,8 +49,8 @@ function resetSharedButtonState() {
 // This function should only be called on OPS repos.
 async function checkSharedButtonState() {
   try {
-    // Check if user has a GitHub token first.
-    const hasToken = await hasGitHubToken();
+    // Check if user is authenticated with GitHub first.
+    const hasToken = await isAuthenticated();
     if (!hasToken) {
       sharedButtonState.isDisabled = true;
       sharedButtonState.disabledReason = INVALID_TOKEN_MESSAGE;
@@ -470,43 +469,15 @@ function isPrFilesPage() {
   return path.includes('/pull/') && path.includes('/files');
 }
 
-// Basic init if the user hasn't added a GitHub token.
 async function init() {
-  // Check if user has a GitHub token.
-  const hasToken = await hasGitHubToken();
+  // Basic init if the user isn't authenticated with GitHub.
+  const authenticated = await isAuthenticated();
 
-  if (!hasToken) {
-    console.log("No GitHub token found.");
+  if (!authenticated) {
+    console.log("User isn't authenticated.");
 
     let cleanupNoTokenObserver = null;
     let cleanupNoTokenNavigation = null;
-
-    // Only set up token observer to wait for token to be entered.
-    const cleanupTokenObserver = setUpTokenObserver(
-      async () => {
-        console.log("GitHub token detected, reinitializing extension");
-        // Token was added, reinitialize the extension.
-        await initializeOctokit();
-
-        // Clean up the token-only observer, no-token observer, and navigation listeners.
-        cleanupTokenObserver();
-        if (cleanupNoTokenObserver) {
-          cleanupNoTokenObserver();
-        }
-        if (cleanupNoTokenNavigation) {
-          cleanupNoTokenNavigation();
-        }
-
-        // Remove existing disabled buttons.
-        removeAllButtons();
-
-        await fullInit();
-      },
-      async () => {
-        // Token removal shouldn't happen when we're in no-token mode, but handle it gracefully.
-        console.log("Token was removed while in no-token mode");
-      }
-    );
 
     // Function to check and add buttons if on PR files page.
     async function checkAndAddNoTokenButtons() {
@@ -548,7 +519,6 @@ async function init() {
 
     // Clean up when navigating away.
     window.addEventListener('beforeunload', () => {
-      cleanupTokenObserver();
       if (cleanupNoTokenObserver) {
         cleanupNoTokenObserver();
       }
@@ -588,44 +558,62 @@ async function fullInit() {
     }
   });
 
-  // Set up token observer to handle token removal,
-  const cleanupTokenObserver = setUpTokenObserver(
-    async () => {
-      // Token was added (shouldn't happen in fullInit, but handle it)
-      console.log("Token was added while extension was running");
-    },
-    async () => {
-      // Token was removed - go back to initial state.
-      console.log("GitHub token was removed, reverting to initial state");
-
-      // Clean up current observers.
-      observers.fileObserver.disconnect();
-      observers.stopInterval();
-      cleanupNavigation();
-
-      // Remove all existing buttons.
-      removeAllButtons();
-
-      // Clear shared state.
-      sharedButtonState.latestCommitSha = null;
-      sharedButtonState.lastBuildStatus = null;
-      sharedButtonState.prStatus = null;
-      sharedButtonState.isDisabled = false;
-      sharedButtonState.disabledReason = "";
-      sharedButtonState.lastCheckTime = 0;
-
-      // Reinitialize in no-token mode.
-      await init();
-    }
-  );
-
   // Clean up when navigating away.
   window.addEventListener('beforeunload', () => {
     observers.fileObserver.disconnect();
     observers.stopInterval();
     cleanupNavigation();
-    cleanupTokenObserver();
   });
 }
+
+// Handle messages from popup
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action === "authenticate") {
+    // Handle authentication request from popup - just try to initialize
+    initializeOctokit().then((result) => {
+      if (result) {
+        sendResponse({ success: true });
+      } else {
+        sendResponse({ success: false, error: "Failed to initialize with stored token" });
+      }
+    }).catch((error) => {
+      console.error("Authentication failed:", error);
+      sendResponse({ success: false, error: error.message });
+    });
+    return true; // Keep message channel open for async response
+  } else if (message.action === "getUserInfo") {
+    // Get user info request from popup
+    isAuthenticated().then(async (authenticated) => {
+      if (authenticated) {
+        try {
+          await initializeOctokit();
+          const { octokit } = await import('./octokit.js');
+          const { data: user } = await octokit.users.getAuthenticated();
+          sendResponse({ success: true, user });
+        } catch (error) {
+          console.error("Failed to get user info:", error);
+          sendResponse({ success: false, error: error.message });
+        }
+      } else {
+        sendResponse({ success: false, error: "Not authenticated" });
+      }
+    }).catch((error) => {
+      console.error("Authentication check failed:", error);
+      sendResponse({ success: false, error: error.message });
+    });
+    return true; // Keep message channel open for async response
+  } else if (message.action === "authCompleted") {
+    // Handle auth completed notification from popup
+    console.log("Authentication completed by popup, reinitializing extension");
+    initializeOctokit().then(() => {
+      // Reload the page to update the UI state with the new auth
+      location.reload();
+    });
+  } else if (message.action === "authCleared") {
+    // Handle auth cleared notification from popup
+    console.log("Authentication cleared by popup");
+    location.reload(); // Reload to update the UI state
+  }
+});
 
 init();

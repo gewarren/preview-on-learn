@@ -2,9 +2,11 @@
   "manifest_version": 3,
   "name": "Preview on Learn",
   "version": "1.0.0",
-  "description": "Add 'Preview on Learn' option to GitHub pull request file kebab menus",
+  "description": "Adds a direct link on each file in a GitHub pull request to preview the file on learn.microsoft.com.",
   "permissions": [
-    "storage"
+    "storage",
+    "identity",
+    "tabs"
   ],
   "host_permissions": [
     "https://api.github.com/*",
@@ -25,5 +27,11 @@
   ],
   "action": {
     "default_popup": "popup.html"
+  },
+  "oauth2": {
+    "client_id": "your_github_client_id",
+    "scopes": [
+      "repo"
+    ]
   }
 }

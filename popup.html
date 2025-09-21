@@ -20,14 +20,6 @@
             font-weight: 600;
         }
 
-        input[type="text"],
-        input[type="password"] {
-            width: 100%;
-            padding: 8px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-        }
-
         button {
             background-color: #1c34ab;
             color: white;
@@ -35,10 +27,16 @@
             padding: 8px 12px;
             border-radius: 4px;
             cursor: pointer;
+            width: 100%;
         }
 
         button:hover {
             background-color: #1c34ab;
+        }
+
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
         }
 
         .status {
@@ -57,52 +55,81 @@
             color: #9b1c1c;
         }
 
-        .token-status {
+        .auth-status {
             display: flex;
             align-items: center;
             gap: 10px;
             margin-bottom: 15px;
+            padding: 10px;
+            border-radius: 4px;
+            background-color: #f6f8fa;
         }
 
-        .token-indicator {
+        .auth-indicator {
             font-weight: bold;
+        }
+
+        .authenticated {
             color: #2ea44f;
+        }
+
+        .not-authenticated {
+            color: #d1242f;
         }
 
         .info-text {
             font-size: 0.9em;
             margin-bottom: 15px;
             color: #555;
+            line-height: 1.4;
         }
 
-        .info-text a {
-            color: #0366d6;
-            text-decoration: none;
-        }
-
-        .info-text a:hover {
-            text-decoration: underline;
+        .github-logo {
+            width: 20px;
+            height: 20px;
+            margin-right: 8px;
+            vertical-align: middle;
         }
     </style>
 </head>
 
 <body>
+    <h1>Preview on Learn</h1>
     <h2>GitHub authentication</h2>
-    <p>This extension requires a GitHub personal access token (PAT). Querying GitHub with a PAT prevents rate limiting and enables the extension to get info from private repos. The token needs the <strong>repo</strong> scope and must also be <a href="https://github.com/settings/tokens" target="_blank">authorized for single sign-on (SSO)</a>.</p>
 
-    <div id="token-status" class="token-status" style="display: none;">
-        <button id="clear-token">Clear saved token</button>
+    <div id="auth-status" class="auth-status">
+        <div>
+            <div id="auth-indicator" class="auth-indicator not-authenticated">Not signed in</div>
+            <div id="user-info" style="font-size: 0.9em; color: #666; display: none;"></div>
+        </div>
     </div>
 
-    <div id="token-form" class="form-group" style="display: block;">
-        <label for="github-token">GitHub personal access token</label>
-        <input type="password" id="github-token" placeholder="">
-        <button id="save-token" style="margin-top: 10px;">Save token</button>
+    <div id="not-authenticated" style="display: block;">
+        <p class="info-text">
+            Sign in with your GitHub account to enable the Preview on Learn extension.
+            This allows the extension to access GitHub APIs and show preview links for files in pull requests.
+        </p>
+        <button id="sign-in-btn">
+            <svg class="github-logo" viewBox="0 0 16 16" fill="currentColor">
+                <path
+                    d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
+            </svg>
+            Sign in with GitHub
+        </button>
+    </div>
+
+    <div id="authenticated" style="display: none;">
+        <p class="info-text">
+            You're signed in to GitHub. The extension can now access GitHub APIs to show preview links.
+        </p>
+        <button id="sign-out-btn" style="background-color: #d1242f;">
+            Sign out
+        </button>
     </div>
 
     <div id="status" class="status" style="display: none;"></div>
 
-    <script src="popup.js"></script>
+    <script type="module" src="popup.js"></script>
 </body>
 
 </html>

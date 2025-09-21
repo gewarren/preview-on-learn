@@ -192,33 +192,6 @@ export function setUpNavigationListeners(onNavigationChange) {
     };
 }
 
-// Sets up observer to watch for GitHub token being added or removed.
-export function setUpTokenObserver(onTokenAdded, onTokenRemoved) {
-    console.log('Setting up token observer');
-
-    // Listen for changes to Chrome storage.
-    const tokenListener = (changes, namespace) => {
-        if (namespace === 'sync' && changes.githubToken) {
-            // Token was added.
-            if (changes.githubToken.newValue && !changes.githubToken.oldValue) {
-                console.log('GitHub token was added');
-                onTokenAdded();
-            }
-            // Token was removed.
-            else if (!changes.githubToken.newValue && changes.githubToken.oldValue) {
-                onTokenRemoved();
-            }
-        }
-    };
-
-    chrome.storage.onChanged.addListener(tokenListener);
-
-    // Return cleanup function.
-    return function cleanup() {
-        chrome.storage.onChanged.removeListener(tokenListener);
-    };
-}
-
 // Sets up observer for when no GitHub token is present.
 export function setUpNoTokenObserver(addButton, invalidTokenMessage) {
     const noTokenObserver = new MutationObserver(async (mutations) => {
