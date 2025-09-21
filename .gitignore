@@ -5,6 +5,7 @@
 
 ## Node modules
 node_modules/
+.npmignore
 
 # Development files
 .DS_Store
