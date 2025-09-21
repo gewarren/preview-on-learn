@@ -1,6 +1,7 @@
 document.addEventListener('DOMContentLoaded', async function () {
     const tokenStatusElement = document.getElementById('token-status');
     const tokenFormElement = document.getElementById('token-form');
+    const tokenStepsElement = document.getElementById('token-steps');
     const tokenInput = document.getElementById('github-token');
     const saveTokenButton = document.getElementById('save-token');
     const clearTokenButton = document.getElementById('clear-token');
@@ -10,15 +11,17 @@ document.addEventListener('DOMContentLoaded', async function () {
     try {
         const result = await chrome.storage.sync.get(['githubToken']);
         if (result.githubToken) {
-            // Token exists - show the token status and hide the form.
+            // Token exists - show the token status and hide the form and steps.
             tokenStatusElement.style.display = 'flex';
             tokenFormElement.style.display = 'none';
+            tokenStepsElement.style.display = 'none';
             // Don't show the token value for security.
             tokenInput.value = '';
         } else {
-            // No token - show the form and hide the token status.
+            // No token - show the form and steps, hide the token status.
             tokenStatusElement.style.display = 'none';
             tokenFormElement.style.display = 'block';
+            tokenStepsElement.style.display = 'block';
         }
     } catch (error) {
         console.error("Error loading token:", error);
@@ -39,9 +42,10 @@ document.addEventListener('DOMContentLoaded', async function () {
 
             showStatus("Token saved successfully!", "success");
 
-            // Show the token status and hide the form.
+            // Show the token status and hide the form and steps.
             tokenStatusElement.style.display = 'flex';
             tokenFormElement.style.display = 'none';
+            tokenStepsElement.style.display = 'none';
             tokenInput.value = '';
 
             // Send message to content script to refresh Octokit.
@@ -60,9 +64,10 @@ document.addEventListener('DOMContentLoaded', async function () {
         try {
             await chrome.storage.sync.remove('githubToken');
 
-            // Hide the token status and show the form.
+            // Hide the token status and show the form and steps.
             tokenStatusElement.style.display = 'none';
             tokenFormElement.style.display = 'block';
+            tokenStepsElement.style.display = 'block';
             tokenInput.value = '';
 
             showStatus("Token removed successfully!", "success");

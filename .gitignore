@@ -3,6 +3,9 @@
 *.pem
 *.zip
 
+## Node modules
+node_modules/
+
 # Development files
 .DS_Store
 Thumbs.db

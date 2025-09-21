@@ -88,14 +88,18 @@
 
 <body>
     <h2>GitHub authentication</h2>
-    <p>This extension requires a GitHub personal access token (PAT). Querying GitHub with a PAT prevents rate limiting and enables the extension to get info from private repos. The token needs the <strong>repo</strong> scope and must also be <a href="https://github.com/settings/tokens" target="_blank">authorized for single sign-on (SSO)</a>.</p>
+    <p>This extension requires a GitHub personal access token (PAT). The PAT helps prevent rate limiting and allows the extension to get info from private repos.</p>
+    
+    <div id="token-steps" style="display: block;">
+        <p>Steps:<br/><br/>1. <a href="https://github.com/settings/tokens/new?scopes=repo&description=Preview%20on%20Learn%20extension" target="_blank">Create a new token with 'repo' scope</a>.<br/>2. Copy the token.<br/>3. <a href="https://github.com/settings/tokens" target="_blank">Authorize it for single sign-on (SSO)</a>.</p>
+    </div>
 
     <div id="token-status" class="token-status" style="display: none;">
         <button id="clear-token">Clear saved token</button>
     </div>
 
     <div id="token-form" class="form-group" style="display: block;">
-        <label for="github-token">GitHub personal access token</label>
+        <label for="github-token">Paste the token here:</label>
         <input type="password" id="github-token" placeholder="">
         <button id="save-token" style="margin-top: 10px;">Save token</button>
     </div>
