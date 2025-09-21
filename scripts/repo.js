@@ -73,9 +73,9 @@ export async function isOpsRepo() {
 
         // Check for the existence of the OPS config file with fetch.
         try {
-            const rawUrl = `https://raw.githubusercontent.com/${repoInfo.owner}/${repoInfo.repo}/main/.openpublishing.publish.config.json`;
+            const url = `https://github.com/${repoInfo.owner}/${repoInfo.repo}/blob/main/.openpublishing.publish.config.json`;
 
-            const response = await fetch(rawUrl, {
+            const response = await fetch(url, {
                 method: 'HEAD',
                 cache: 'no-cache'
             });
