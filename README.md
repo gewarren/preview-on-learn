@@ -6,7 +6,7 @@ This Microsoft Edge extension is for contributors to docs on <https://learn.micr
 
 ## Install
 
-1. Install the extension from [Microsoft Edge Add-ons](https://microsoftedge.microsoft.com/addons/Microsoft-Edge-Extensions-Home).
+1. Install the extension from [Microsoft Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/preview-on-learn/kmaokccoghndaobkiiolhkedpoeiohjb).
 1. Add a personal access token (PAT) so the extension can authenticate to GitHub and obtain information about the repo, such as pull request status.
 
    1. Select **Extensions** > **Preview on Learn**.
