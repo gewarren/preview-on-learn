@@ -257,7 +257,7 @@ async function checkSharedButtonState() {
 // Updates an single button's state.
 // This is called from the interval observer and the mutation observer.
 async function updateButtonState(button, state) {
-  console.log(`Updating button. Current disabled state is ${state.isDisabled}, reason: ${state.disabledReason}`);
+  console.log(`Updating button. Current enabled state is ${!(state.isDisabled)}, reason: ${state.disabledReason}`);
 
   const isNowDisabled = state.isDisabled;
   let disabledReason = state.disabledReason;

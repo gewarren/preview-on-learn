@@ -1,5 +1,20 @@
 import { extractRepoInfo, getPrInfo, getSpecificStatusCheck } from './pr-helpers.js';
 
+// Cache for build report data
+const buildReportCache = new Map();
+// Track in-progress requests to prevent duplicate API calls
+const inProgressRequests = new Map();
+const MAX_CACHE_SIZE = 50;
+
+// Cache cleanup to prevent memory issues
+function cleanupCache() {
+    if (buildReportCache.size > MAX_CACHE_SIZE) {
+        const oldestKey = buildReportCache.keys().next().value;
+        buildReportCache.delete(oldestKey);
+        console.log(`Removed oldest cached entry: ${oldestKey}`);
+    }
+}
+
 // Gets preview URL for a file from the build report.
 export async function getPreviewUrl(fileName) {
     try {
@@ -8,46 +23,100 @@ export async function getPreviewUrl(fileName) {
             return null;
         }
 
-        // Get the latest commit SHA.
-        const prInfo = await getPrInfo(
-            repoInfo.owner,
-            repoInfo.repo,
-            repoInfo.prNumber
-        );
+        // Create a cache key for this repo/PR combination
+        const cacheKey = `${repoInfo.owner}/${repoInfo.repo}/pull/${repoInfo.prNumber}`;
 
-        if (!prInfo || !prInfo.commitSha) {
-            return null;
+        // Check if we have cached data for this PR
+        if (buildReportCache.has(cacheKey)) {
+            const cached = buildReportCache.get(cacheKey);
+            console.log(`Using cached preview links for PR #${repoInfo.prNumber} commit ${cached.commitSha}`);
+
+            // Move to end (LRU)
+            buildReportCache.delete(cacheKey);
+            buildReportCache.set(cacheKey, cached);
+
+            return cached.previewLinks[fileName] || null;
         }
 
-        // Get the OPS status check.
-        const opsCheck = await getSpecificStatusCheck(
-            repoInfo.owner,
-            repoInfo.repo,
-            prInfo.commitSha,
-            "OpenPublishing.Build"
-        );
-
-        if (!opsCheck || !opsCheck.details_url || opsCheck.status !== 'success') {
-            return null;
+        // Check if there's already a request in progress for this PR
+        if (inProgressRequests.has(cacheKey)) {
+            console.log(`Waiting for in-progress request for PR #${repoInfo.prNumber}`);
+            const cached = await inProgressRequests.get(cacheKey);
+            return cached.previewLinks[fileName] || null;
         }
 
-        // Fetch and parse the build report.
-        const buildReportDoc = await fetchBuildReport(opsCheck.details_url);
-        if (!buildReportDoc) {
-            return null;
+        console.log(`Fetching fresh data for PR #${repoInfo.prNumber}`);
+
+        // Create a promise for this request and store it
+        const requestPromise = fetchPrData(repoInfo, cacheKey);
+        inProgressRequests.set(cacheKey, requestPromise);
+
+        try {
+            // Wait for the request to complete
+            const cached = await requestPromise;
+            return cached.previewLinks[fileName] || null;
+        } finally {
+            // Clean up the in-progress request regardless of success/failure
+            inProgressRequests.delete(cacheKey);
         }
 
-        const previewLinks = extractPreviewLinks(buildReportDoc);
-        if (!previewLinks || Object.keys(previewLinks).length === 0) {
-            return null;
-        }
-
-        // Try to find a match for the current file.
-        return previewLinks[fileName] || null;
     } catch (error) {
         console.error('Error getting preview URL:', error);
         return null;
     }
+}
+
+// Separate function to handle the actual data fetching
+async function fetchPrData(repoInfo, cacheKey) {
+    // Get the latest commit SHA and PR status
+    const prInfo = await getPrInfo(
+        repoInfo.owner,
+        repoInfo.repo,
+        repoInfo.prNumber
+    );
+
+    if (!prInfo || !prInfo.commitSha) {
+        throw new Error('Could not get PR info');
+    }
+
+    // Get the OPS status check
+    const opsCheck = await getSpecificStatusCheck(
+        repoInfo.owner,
+        repoInfo.repo,
+        prInfo.commitSha,
+        "OpenPublishing.Build"
+    );
+
+    if (!opsCheck || !opsCheck.details_url || opsCheck.status !== 'success') {
+        throw new Error('OPS status check not available or not successful');
+    }
+
+    // Fetch and parse the build report
+    const buildReportDoc = await fetchBuildReport(opsCheck.details_url);
+    if (!buildReportDoc) {
+        throw new Error('Could not fetch build report');
+    }
+
+    const previewLinks = extractPreviewLinks(buildReportDoc);
+    if (!previewLinks || Object.keys(previewLinks).length === 0) {
+        console.log('No preview links found in build report');
+        throw new Error('No preview links found');
+    }
+
+    // Cache the complete result
+    const cacheData = {
+        commitSha: prInfo.commitSha,
+        prStatus: prInfo.prStatus,
+        previewLinks: previewLinks,
+        timestamp: Date.now()
+    };
+
+    buildReportCache.set(cacheKey, cacheData);
+    cleanupCache();
+
+    console.log(`Cached preview links for PR #${repoInfo.prNumber} commit ${prInfo.commitSha} (${Object.keys(previewLinks).length} files)`);
+
+    return cacheData;
 }
 
 // Fetches and parses the build report.
