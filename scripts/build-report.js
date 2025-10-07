@@ -161,7 +161,6 @@ function extractPreviewLinks(buildReportDoc) {
                     const headers = Array.from(cells).map(cell => cell.textContent.trim());
 
                     if (headers.includes('File') && headers.some(h => h.includes('Preview URL'))) {
-                        console.log("Found table with matching headers");
                         return extractLinksFromTable(table);
                     }
                 }
@@ -181,19 +180,6 @@ function extractLinksFromTable(table) {
     const previewLinks = {};
 
     const rows = table.querySelectorAll('tr');
-    console.log(`Table has ${rows.length} rows`);
-
-    // Debug: Log each row's content
-    for (let i = 0; i < rows.length; i++) {
-        const cells = rows[i].querySelectorAll('td');
-        console.log(`Row ${i}: ${cells.length} cells`);
-        if (cells.length > 0) {
-            console.log(`  First cell text: "${cells[0].textContent?.trim()?.substring(0, 50)}..."`);
-            if (cells.length >= 3) {
-                console.log(`  Third cell text: "${cells[2].textContent?.trim()?.substring(0, 50)}..."`);
-            }
-        }
-    }
 
     // Process each row (skip the header row).
     for (let i = 1; i < rows.length; i++) {
@@ -217,25 +203,14 @@ function processRow(row, previewLinks) {
         const previewCell = cells[2];
         const previewLink = previewCell.querySelector('a');
 
-        console.log(`Processing row - File link: ${!!fileLink}, Preview link: ${!!previewLink}`);
-
         if (fileLink && previewLink) {
             const filePath = fileLink.textContent.trim();
             const previewUrl = previewLink.href;
 
-            console.log(`  File: "${filePath}"`);
-            console.log(`  Preview URL: "${previewUrl}"`);
-
             if (filePath && previewUrl) {
                 previewLinks[filePath] = previewUrl;
-                console.log(`  Added to previewLinks`);
             } else {
-                console.log(`  Skipped - missing filePath or previewUrl`);
             }
-        } else {
-            console.log(`  Skipped - missing fileLink (${!!fileLink}) or previewLink (${!!previewLink})`);
         }
-    } else {
-        console.log(`Row ${row.rowIndex} has ${cells.length} cells, expected at least 3`);
     }
 }
