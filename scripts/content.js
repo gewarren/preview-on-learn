@@ -108,16 +108,13 @@ async function checkSharedButtonState() {
       return sharedButtonState;
     }
 
-    // For merged PRs, we'll still check for preview URLs like open PRs
-    // but we won't check build status since merged PRs don't get new builds
-
     if (currentCommitSha !== sharedButtonState.latestCommitSha) {
       // Commit SHA has changed, update it and check build status.
       console.log(`Commit SHA changed from ${sharedButtonState.latestCommitSha} to ${currentCommitSha}`);
       sharedButtonState.latestCommitSha = currentCommitSha;
 
-      // For merged PRs, skip build status checks and enable buttons
-      // Individual buttons will be disabled if no preview URL is found
+      // For merged PRs, skip build status checks and enable buttons.
+      // Individual buttons will be disabled if no preview URL is found.
       if (prStatus === 'merged') {
         sharedButtonState.isDisabled = false;
         sharedButtonState.disabledReason = "";
@@ -160,7 +157,7 @@ async function checkSharedButtonState() {
       sharedButtonState.lastBuildStatus = opsCheck.status;
       return sharedButtonState;
     } else if (sharedButtonState.lastBuildStatus === "pending") {
-      // For merged PRs, skip build status checks
+      // For merged PRs, skip build status checks.
       if (prStatus === 'merged') {
         return sharedButtonState;
       }
@@ -207,7 +204,7 @@ async function checkSharedButtonState() {
       sharedButtonState.lastBuildStatus = currentBuildStatus;
       return sharedButtonState;
     } else if (!sharedButtonState.lastBuildStatus || sharedButtonState.isDisabled) {
-      // For merged PRs, skip build status checks
+      // For merged PRs, skip build status checks.
       if (prStatus === 'merged') {
         return sharedButtonState;
       }
@@ -266,7 +263,7 @@ async function updateButtonState(button, state) {
   let disabledReason = state.disabledReason;
 
   // Check current state.
-  const currentlyDisabled = button.disabled || button.classList.contains('disabled');
+  const currentlyDisabled = button.classList.contains('disabled');
 
   // Update the button only if the state or the reason has changed.
   if (currentlyDisabled === isNowDisabled && button.disabledReason === disabledReason) {
@@ -276,7 +273,8 @@ async function updateButtonState(button, state) {
   // If the shared state says the button should be disabled, always respect that.
   if (isNowDisabled) {
     button.classList.add('disabled');
-    button.disabled = true;
+    button.setAttribute('aria-disabled', 'true');
+    button.removeAttribute('href');
 
     // Add tooltip with reason.
     if (disabledReason) {
@@ -292,7 +290,8 @@ async function updateButtonState(button, state) {
     const linkElement = filePathElement.querySelector(".Link--primary");
     const fullText = linkElement?.textContent;
 
-    // Try to extract filename from text content first (handles renames with "old → new").
+    // Try to extract filename from text content first
+    // (handles renames with "old → new").
     let fileName = fullText?.split(" → ").pop();
 
     // If filename is invalid or looks truncated, use data-path.
@@ -311,12 +310,12 @@ async function updateButtonState(button, state) {
 
         if (previewUrl) {
           console.log(`Adding preview URL to ${fileName}: ${previewUrl}`);
-          button.title = previewUrl;
-          button.dataset.previewUrl = previewUrl;
+          button.href = previewUrl;
+          button.removeAttribute('title');
 
           // Enable the button and return.
-          button.disabled = false;
           button.classList.remove('disabled');
+          button.removeAttribute('aria-disabled');
           return;
         } else {
           // Likely an unpublished file (e.g. docfx.json).
@@ -333,7 +332,8 @@ async function updateButtonState(button, state) {
   // If we get here, button should be disabled (no preview URL found).
   console.log(`Disabling button for ${state.prStatus} PR because: ${disabledReason}`);
   button.classList.add('disabled');
-  button.disabled = true;
+  button.setAttribute('aria-disabled', 'true');
+  button.removeAttribute('href');
 
   // Add tooltip with reason.
   if (disabledReason) {
@@ -372,21 +372,22 @@ function addButton(showCommentsMenuItem, isDisabled = false, disabledReason = ""
     showCommentsMenuItem.after(divider);
 
     // Create new button.
-    let menuItem = document.createElement("button");
+    let button = document.createElement("a");
 
     // Set attributes and properties.
-    menuItem.className = "pl-5 dropdown-item btn-link preview-on-learn";
-    menuItem.setAttribute("role", "menuitem");
-    menuItem.setAttribute("type", "button");
-    menuItem.textContent = "Preview on Learn";
+    button.className = "pl-5 dropdown-item btn-link preview-on-learn";
+    button.setAttribute("role", "menuitem");
+    button.textContent = "Preview on Learn";
 
     // If disabled, add appropriate styling and attributes.
     if (isDisabled) {
-      menuItem.disabled = true;
+      button.classList.add('disabled');
+      button.setAttribute('aria-disabled', 'true');
+      // Don't set href at all for disabled buttons...
 
       // Add tooltip with reason.
       if (disabledReason) {
-        menuItem.title = disabledReason;
+        button.title = disabledReason;
       }
     } else {
       // Get and store the preview URL.
@@ -408,9 +409,8 @@ function addButton(showCommentsMenuItem, isDisabled = false, disabledReason = ""
 
         if (fileName) {
           getPreviewUrl(fileName).then(previewUrl => {
-            if (previewUrl && !menuItem.disabled) {
-              menuItem.title = previewUrl;
-              menuItem.dataset.previewUrl = previewUrl;
+            if (previewUrl && !button.classList.contains('disabled')) {
+              button.href = previewUrl;
             }
           }).catch((error) => {
             console.warn("Error while getting preview URL:", error);
@@ -420,16 +420,22 @@ function addButton(showCommentsMenuItem, isDisabled = false, disabledReason = ""
     }
 
     // Add event listener to ALL buttons (enabled or disabled).
-    menuItem.addEventListener('click', function (event) {
+    button.addEventListener('click', function (event) {
       event.preventDefault();
       event.stopPropagation();
-      if (menuItem.dataset.previewUrl) {
-        window.open(menuItem.dataset.previewUrl, '_blank');
+
+      // Don't open if disabled
+      if (button.classList.contains('disabled')) {
+        return;
+      }
+
+      if (button.href) {
+        window.open(button.href, '_blank');
       }
     }, { capture: true });
 
     // Add new button to menu below divider.
-    divider.after(menuItem);
+    divider.after(button);
 
     console.log(`Successfully added preview button${isDisabled ? " (disabled)" : ""}`);
   } catch (error) {
