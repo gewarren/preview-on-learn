@@ -26,8 +26,8 @@ export async function getPrInfo(owner, repo, prNumber) {
 
         if (pullRequest && pullRequest.head && pullRequest.head.sha) {
             const latestCommitSha = pullRequest.head.sha;
-            
-            // Determine PR status: GitHub API returns 'open' or 'closed', 
+
+            // Determine PR status: GitHub API returns 'open' or 'closed',
             // but we need to distinguish between 'closed' and 'merged'
             let prStatus;
             if (pullRequest.state === 'open') {
@@ -37,7 +37,7 @@ export async function getPrInfo(owner, repo, prNumber) {
             } else {
                 prStatus = 'closed';
             }
-            
+
             console.log(`Latest commit SHA: ${latestCommitSha}, PR status: ${prStatus}`);
             return {
                 commitSha: latestCommitSha,
@@ -107,20 +107,20 @@ export async function getSpecificStatusCheck(owner, repo, commitSha, checkName) 
 
             const statusChecks = await getStatusChecks(owner, repo, commitSha);
 
-            const matchingStatusCheck = statusChecks.find(status =>
-                status.context.toLowerCase().includes(checkName.toLowerCase())
+            const exactMatch = statusChecks.find(status =>
+                status.context === checkName
             );
 
-            if (matchingStatusCheck) {
-                console.log(`Found matching status check: ${matchingStatusCheck.context}`);
+            if (exactMatch) {
+                console.log(`Found exact matching status check: ${exactMatch.context}`);
                 return {
-                    name: matchingStatusCheck.context,
-                    status: matchingStatusCheck.state,
-                    details_url: matchingStatusCheck.target_url
+                    name: exactMatch.context,
+                    status: exactMatch.state,
+                    details_url: exactMatch.target_url
                 };
             }
 
-            console.warn(`No status check found with name containing "${checkName}" on attempt ${attempt}`);
+            console.warn(`No status check found with name "${checkName}" on attempt ${attempt}`);
         } catch (error) {
             console.error(`Error fetching specific status check on attempt ${attempt}:`, error);
         }
@@ -129,11 +129,10 @@ export async function getSpecificStatusCheck(owner, repo, commitSha, checkName) 
             if (attempt < maxRetries) {
                 retryDelay = retryDelay * 2;
                 await new Promise(resolve => setTimeout(resolve, retryDelay));
-
             }
         }
-
-        console.warn(`Failed to find status check "${checkName}" after ${maxRetries} attempts`);
-        return null;
     }
+
+    console.warn(`Failed to find status check "${checkName}" after ${maxRetries} attempts`);
+    return null;
 }
