@@ -32,7 +32,8 @@ const sharedButtonState = {
   prStatus: null, // 'open', 'closed', or 'merged'.
   isDisabled: false,
   disabledReason: "",
-  lastCheckTime: 0
+  lastCheckTime: 0,
+  previewUrlsFetched: false // Track if we've fetched preview URLs for current commit
 };
 
 // Reset shared state when navigating to a different PR
@@ -43,6 +44,7 @@ function resetSharedButtonState() {
   sharedButtonState.isDisabled = false;
   sharedButtonState.disabledReason = "";
   sharedButtonState.lastCheckTime = 0;
+  sharedButtonState.previewUrlsFetched = false; // Reset preview URLs fetched flag
   console.log("Reset shared button state for navigation");
 }
 
@@ -112,6 +114,9 @@ async function checkSharedButtonState() {
       // Commit SHA has changed, update it and check build status.
       console.log(`Commit SHA changed from ${sharedButtonState.latestCommitSha} to ${currentCommitSha}`);
       sharedButtonState.latestCommitSha = currentCommitSha;
+
+      // Reset preview URLs fetched flag since we have a new commit
+      sharedButtonState.previewUrlsFetched = false;
 
       // For merged PRs, skip build status checks and enable buttons.
       // Individual buttons will be disabled if no preview URL is found.
@@ -257,17 +262,36 @@ async function checkSharedButtonState() {
 // Updates an single button's state.
 // This is called from the interval observer and the mutation observer.
 async function updateButtonState(button, state) {
-  console.log(`Updating button. Current disabled state is ${state.isDisabled}, reason: ${state.disabledReason}`);
-
   const isNowDisabled = state.isDisabled;
-  let disabledReason = state.disabledReason;
+  let newDisabledReason = state.disabledReason;
 
   // Check current state.
-  const currentlyDisabled = button.classList.contains('disabled');
+  const previouslyDisabled = button.classList.contains('disabled');
 
-  // Update the button only if the state or the reason has changed.
-  if (currentlyDisabled === isNowDisabled && button.disabledReason === disabledReason) {
+  // If previously enabled and is now enabled, no update needed.
+  if (!previouslyDisabled && !isNowDisabled) {
     return;
+  }
+
+  // If previously disabled and now disabled and
+  //  the disabled reason hasn't changed, return.
+  if (previouslyDisabled === isNowDisabled &&
+    (button.disabledReason === newDisabledReason ||
+      (typeof button.disabledReason === "undefined" && newDisabledReason === ''))) {
+    return;
+  }
+
+  // Debugging.
+  //console.log(`Previously disabled: ${previouslyDisabled}`);
+  //console.log(`Newly disabled: ${isNowDisabled}`);
+  //console.log(`Previous disabled reason: ${button.disabledReason}`);
+  //console.log(`New disabled reason: ${newDisabledReason}`);
+
+  // Either enablement or disabled reason has changed.
+  console.log('Updating button state or disabled reason.');
+  console.log(`Current enabled state is ${!(state.isDisabled)}.`);
+  if (state.disabledReason) {
+    console.log(`Reason: ${state.disabledReason}`);
   }
 
   // If the shared state says the button should be disabled, always respect that.
@@ -277,9 +301,9 @@ async function updateButtonState(button, state) {
     button.removeAttribute('href');
 
     // Add tooltip with reason.
-    if (disabledReason) {
-      button.disabledReason = disabledReason;
-      button.title = disabledReason;
+    if (newDisabledReason) {
+      button.disabledReason = newDisabledReason;
+      button.title = newDisabledReason;
     }
     return;
   }
@@ -303,42 +327,59 @@ async function updateButtonState(button, state) {
     }
 
     if (fileName) {
-      try {
-        // Await the preview URL.
-        console.log(`Attempting to get preview URL for '${fileName}' on ${state.prStatus} PR`);
-        const previewUrl = await getPreviewUrl(fileName);
+      // Optimization: Only fetch preview URL if we don't have one yet OR commit SHA has changed.
+      const needsFetch = !button.href || !sharedButtonState.previewUrlsFetched;
 
-        if (previewUrl) {
-          console.log(`Adding preview URL to ${fileName}: ${previewUrl}`);
-          button.href = previewUrl;
+      if (needsFetch) {
+        try {
+          // Await the preview URL.
+          console.log(`Attempting to get preview URL for '${fileName}' on ${state.prStatus} PR`);
+          const previewUrl = await getPreviewUrl(fileName);
+
+          if (previewUrl) {
+            console.log(`Adding preview URL to ${fileName}: ${previewUrl}`);
+            button.href = previewUrl;
+            button.removeAttribute('title');
+
+            // Enable the button and return.
+            button.classList.remove('disabled');
+            button.removeAttribute('aria-disabled');
+
+            // Mark that we've successfully fetched preview URLs for this commit.
+            sharedButtonState.previewUrlsFetched = true;
+            return;
+          } else {
+            // Likely an unpublished file (e.g. docfx.json).
+            console.log(`No preview URL found for '${fileName}' on ${state.prStatus} PR`);
+            newDisabledReason = NO_PREVIEW_URL;
+          }
+        } catch (error) {
+          console.error(`Error getting preview URL for '${fileName}' on ${state.prStatus} PR:`, error);
+          newDisabledReason = NO_PREVIEW_URL;
+        }
+      } else {
+        // We already have a preview URL and commit hasn't changed, just enable the button.
+        if (button.href) {
+          console.log(`Enabling button and using existing preview URL for ${fileName}.`);
           button.removeAttribute('title');
-
-          // Enable the button and return.
           button.classList.remove('disabled');
           button.removeAttribute('aria-disabled');
           return;
-        } else {
-          // Likely an unpublished file (e.g. docfx.json).
-          console.log(`No preview URL found for '${fileName}' on ${state.prStatus} PR`);
-          disabledReason = NO_PREVIEW_URL;
         }
-      } catch (error) {
-        console.error(`Error getting preview URL for '${fileName}' on ${state.prStatus} PR:`, error);
-        disabledReason = NO_PREVIEW_URL;
       }
     }
   }
 
   // If we get here, button should be disabled (no preview URL found).
-  console.log(`Disabling button for ${state.prStatus} PR because: ${disabledReason}`);
+  console.log(`Disabling button for ${state.prStatus} PR because: ${newDisabledReason}`);
   button.classList.add('disabled');
   button.setAttribute('aria-disabled', 'true');
   button.removeAttribute('href');
 
   // Add tooltip with reason.
-  if (disabledReason) {
-    button.disabledReason = disabledReason;
-    button.title = disabledReason;
+  if (newDisabledReason) {
+    button.disabledReason = newDisabledReason;
+    button.title = newDisabledReason;
   }
 }
 
@@ -619,6 +660,7 @@ async function fullInit() {
       sharedButtonState.isDisabled = false;
       sharedButtonState.disabledReason = "";
       sharedButtonState.lastCheckTime = 0;
+      sharedButtonState.previewUrlsFetched = false; // Reset preview URLs fetched flag
 
       // Reinitialize in no-token mode.
       await init();

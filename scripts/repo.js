@@ -54,7 +54,7 @@ export async function isOpsRepo() {
     // Check if we already have a cached result for this repository
     if (opsRepoCache.has(cacheKey)) {
         const cachedResult = opsRepoCache.get(cacheKey);
-        console.log(`Using cached OPS repo result for ${cacheKey}: ${cachedResult}`);
+        //console.log(`Using cached OPS repo result for ${cacheKey}: ${cachedResult}`);
         return cachedResult;
     }
 
