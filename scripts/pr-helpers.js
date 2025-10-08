@@ -15,8 +15,6 @@ export function extractRepoInfo() {
 // Gets the latest commit SHA and status of the PR.
 export async function getPrInfo(owner, repo, prNumber) {
     try {
-        console.log(`Attempting to get latest commit and status for PR #${prNumber} in ${owner}/${repo}`);
-
         // Get the PR details, which includes the latest commit SHA and status.
         const { data: pullRequest } = await octokit.pulls.get({
             owner,

@@ -23,13 +23,24 @@ export async function getPreviewUrl(fileName) {
             return null;
         }
 
-        // Create a cache key for this repo/PR combination
-        const cacheKey = `${repoInfo.owner}/${repoInfo.repo}/pull/${repoInfo.prNumber}`;
+        // Get the current commit SHA first
+        const prInfo = await getPrInfo(
+            repoInfo.owner,
+            repoInfo.repo,
+            repoInfo.prNumber
+        );
 
-        // Check if we have cached data for this PR
+        if (!prInfo || !prInfo.commitSha) {
+            return null;
+        }
+
+        // Create a cache key using commit SHA instead of PR number
+        const cacheKey = `${repoInfo.owner}/${repoInfo.repo}/commit/${prInfo.commitSha}`;
+
+        // Check if we have cached data for this specific commit
         if (buildReportCache.has(cacheKey)) {
             const cached = buildReportCache.get(cacheKey);
-            console.log(`Using cached preview links for PR #${repoInfo.prNumber} commit ${cached.commitSha}`);
+            console.log(`Using cached preview links for commit ${prInfo.commitSha}`);
 
             // Move to end (LRU)
             buildReportCache.delete(cacheKey);
@@ -38,17 +49,17 @@ export async function getPreviewUrl(fileName) {
             return cached.previewLinks[fileName] || null;
         }
 
-        // Check if there's already a request in progress for this PR
+        // Check if there's already a request in progress for this commit
         if (inProgressRequests.has(cacheKey)) {
-            console.log(`Waiting for in-progress request for PR #${repoInfo.prNumber}`);
+            console.log(`Waiting for in-progress request for commit ${prInfo.commitSha}`);
             const cached = await inProgressRequests.get(cacheKey);
             return cached.previewLinks[fileName] || null;
         }
 
-        console.log(`Fetching fresh data for PR #${repoInfo.prNumber}`);
+        console.log(`Fetching fresh data for commit ${prInfo.commitSha}`);
 
         // Create a promise for this request and store it
-        const requestPromise = fetchPrData(repoInfo, cacheKey);
+        const requestPromise = fetchPrData(repoInfo, cacheKey, prInfo);
         inProgressRequests.set(cacheKey, requestPromise);
 
         try {
@@ -67,17 +78,8 @@ export async function getPreviewUrl(fileName) {
 }
 
 // Separate function to handle the actual data fetching
-async function fetchPrData(repoInfo, cacheKey) {
-    // Get the latest commit SHA and PR status
-    const prInfo = await getPrInfo(
-        repoInfo.owner,
-        repoInfo.repo,
-        repoInfo.prNumber
-    );
-
-    if (!prInfo || !prInfo.commitSha) {
-        throw new Error('Could not get PR info');
-    }
+async function fetchPrData(repoInfo, cacheKey, prInfo) {
+    // We already have prInfo, so no need to fetch it again
 
     // Get the OPS status check
     const opsCheck = await getSpecificStatusCheck(
@@ -114,7 +116,7 @@ async function fetchPrData(repoInfo, cacheKey) {
     buildReportCache.set(cacheKey, cacheData);
     cleanupCache();
 
-    console.log(`Cached preview links for PR #${repoInfo.prNumber} commit ${prInfo.commitSha} (${Object.keys(previewLinks).length} files)`);
+    console.log(`Cached preview links for commit ${prInfo.commitSha} (${Object.keys(previewLinks).length} files)`);
 
     return cacheData;
 }
