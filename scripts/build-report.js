@@ -1,13 +1,13 @@
 import { extractRepoInfo, getPrInfo, getSpecificStatusCheck } from './pr-helpers.js';
 
-// Cache for build report data
+// Cache for build report data - one entry per PR with latest commit
 const buildReportCache = new Map();
 // Track in-progress requests to prevent duplicate API calls
 const inProgressRequests = new Map();
 const MAX_CACHE_SIZE = 50;
 
 // Cache cleanup to prevent memory issues
-function cleanupCache() {
+function cleanUpCache() {
     if (buildReportCache.size > MAX_CACHE_SIZE) {
         const oldestKey = buildReportCache.keys().next().value;
         buildReportCache.delete(oldestKey);
@@ -34,29 +34,36 @@ export async function getPreviewUrl(fileName) {
             return null;
         }
 
-        // Create a cache key using commit SHA instead of PR number
-        const cacheKey = `${repoInfo.owner}/${repoInfo.repo}/commit/${prInfo.commitSha}`;
+        // Use PR-based cache key
+        const cacheKey = `${repoInfo.owner}/${repoInfo.repo}/pull/${repoInfo.prNumber}`;
 
-        // Check if we have cached data for this specific commit
+        // Check if we have cached data for this PR and it matches current commit
         if (buildReportCache.has(cacheKey)) {
             const cached = buildReportCache.get(cacheKey);
-            console.log(`Using cached preview links for commit ${prInfo.commitSha}`);
 
-            // Move to end (LRU)
-            buildReportCache.delete(cacheKey);
-            buildReportCache.set(cacheKey, cached);
+            if (cached.commitSha === prInfo.commitSha) {
+                console.log(`Using cached preview links for PR #${repoInfo.prNumber} commit ${prInfo.commitSha}`);
 
-            return cached.previewLinks[fileName] || null;
+                // Move to end (LRU)
+                buildReportCache.delete(cacheKey);
+                buildReportCache.set(cacheKey, cached);
+
+                return cached.previewLinks[fileName] || null;
+            } else {
+                // Commit SHA has changed, invalidate cache
+                console.log(`Commit SHA changed from ${cached.commitSha} to ${prInfo.commitSha}, invalidating cache for PR #${repoInfo.prNumber}`);
+                buildReportCache.delete(cacheKey);
+            }
         }
 
-        // Check if there's already a request in progress for this commit
+        // Check if there's already a request in progress for this PR
         if (inProgressRequests.has(cacheKey)) {
-            console.log(`Waiting for in-progress request for commit ${prInfo.commitSha}`);
+            console.log(`Waiting for in-progress request for PR #${repoInfo.prNumber}`);
             const cached = await inProgressRequests.get(cacheKey);
             return cached.previewLinks[fileName] || null;
         }
 
-        console.log(`Fetching fresh data for commit ${prInfo.commitSha}`);
+        console.log(`Fetching fresh data for PR #${repoInfo.prNumber} commit ${prInfo.commitSha}`);
 
         // Create a promise for this request and store it
         const requestPromise = fetchPrData(repoInfo, cacheKey, prInfo);
@@ -79,8 +86,6 @@ export async function getPreviewUrl(fileName) {
 
 // Separate function to handle the actual data fetching
 async function fetchPrData(repoInfo, cacheKey, prInfo) {
-    // We already have prInfo, so no need to fetch it again
-
     // Get the OPS status check
     const opsCheck = await getSpecificStatusCheck(
         repoInfo.owner,
@@ -105,7 +110,7 @@ async function fetchPrData(repoInfo, cacheKey, prInfo) {
         throw new Error('No preview links found');
     }
 
-    // Cache the complete result
+    // Cache the complete result (overwrites any existing cache for this PR)
     const cacheData = {
         commitSha: prInfo.commitSha,
         prStatus: prInfo.prStatus,
@@ -114,9 +119,9 @@ async function fetchPrData(repoInfo, cacheKey, prInfo) {
     };
 
     buildReportCache.set(cacheKey, cacheData);
-    cleanupCache();
+    cleanUpCache();
 
-    console.log(`Cached preview links for commit ${prInfo.commitSha} (${Object.keys(previewLinks).length} files)`);
+    console.log(`Cached preview links for PR #${repoInfo.prNumber} commit ${prInfo.commitSha} (${Object.keys(previewLinks).length} files)`);
 
     return cacheData;
 }
@@ -211,7 +216,6 @@ function processRow(row, previewLinks) {
 
             if (filePath && previewUrl) {
                 previewLinks[filePath] = previewUrl;
-            } else {
             }
         }
     }
