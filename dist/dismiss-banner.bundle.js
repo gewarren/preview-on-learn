@@ -1,0 +1,1 @@
+(()=>{"use strict";console.log("Preview on Learn: Banner dismissal script loaded"),function(){const e=document.querySelector('button[data-dismiss][data-bi-name="close"].delete');return!!e&&(console.log("Preview on Learn: Found banner dismiss button, clicking it"),e.click(),!0)}()&&console.log("Preview on Learn: Banner dismissed successfully")})();

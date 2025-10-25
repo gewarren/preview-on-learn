@@ -471,6 +471,12 @@ function addButton(showCommentsMenuItem, isDisabled = false, disabledReason = ""
       }
 
       if (button.href) {
+        // Close the dropdown menu before opening the link.
+        const dropdown = button.closest('.js-file-header-dropdown');
+        if (dropdown) {
+          dropdown.open = false;
+        }
+
         window.open(button.href, '_blank');
       }
     }, { capture: true });

@@ -8,7 +8,8 @@
   ],
   "host_permissions": [
     "https://api.github.com/*",
-    "https://github.com/*"
+    "https://github.com/*",
+    "https://review.learn.microsoft.com/*"
   ],
   "icons": {
     "128": "images/icon.png"
@@ -21,6 +22,15 @@
       "matches": [
         "https://github.com/*"
       ]
+    },
+    {
+      "js": [
+        "dist/dismiss-banner.bundle.js"
+      ],
+      "matches": [
+        "https://review.learn.microsoft.com/*"
+      ],
+      "run_at": "document_end"
     }
   ],
   "action": {
