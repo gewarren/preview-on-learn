@@ -7,7 +7,9 @@ const __dirname = path.dirname(__filename);
 export default {
     entry: {
         content: './scripts/content.js',
-        'dismiss-banner': './scripts/dismiss-banner.js'
+        'dismiss-banner': './scripts/dismiss-banner.js',
+        popup: './popup.js',
+        background: './background.js'
     },
     output: {
         filename: '[name].bundle.js',

@@ -1,3 +1,6 @@
+import { tokenEncryption } from './scripts/encryption.js';
+import { createTokenHandler } from './scripts/token-handler.js';
+
 document.addEventListener('DOMContentLoaded', async function () {
     const tokenStatusElement = document.getElementById('token-status');
     const tokenFormElement = document.getElementById('token-form');
@@ -7,11 +10,14 @@ document.addEventListener('DOMContentLoaded', async function () {
     const clearTokenButton = document.getElementById('clear-token');
     const statusElement = document.getElementById('status');
 
+    // Create token handler for popup context.
+    const tokenHandler = createTokenHandler(tokenEncryption);
+
     // Check if a token is already saved.
     try {
-        const result = await chrome.storage.sync.get(['githubToken']);
-        if (result.githubToken) {
-            // Token exists - show the token status and hide the form and steps.
+        const hasToken = await tokenHandler.hasGitHubToken();
+        if (hasToken) {
+            // Token exists and is valid - show the token status and hide the form and steps.
             tokenStatusElement.style.display = 'flex';
             tokenFormElement.style.display = 'none';
             tokenStepsElement.style.display = 'none';
@@ -38,7 +44,9 @@ document.addEventListener('DOMContentLoaded', async function () {
         }
 
         try {
-            await chrome.storage.sync.set({ githubToken: token });
+            // Encrypt the token before storing
+            const encryptedToken = await tokenEncryption.encryptToken(token);
+            await chrome.storage.session.set({ githubToken: encryptedToken });
 
             showStatus("Token saved successfully!", "success");
 
@@ -57,7 +65,7 @@ document.addEventListener('DOMContentLoaded', async function () {
     // Clear token when button is clicked.
     clearTokenButton.addEventListener('click', async function () {
         try {
-            await chrome.storage.sync.remove('githubToken');
+            await chrome.storage.session.remove('githubToken');
 
             // Hide the token status and show the form and steps.
             tokenStatusElement.style.display = 'none';
