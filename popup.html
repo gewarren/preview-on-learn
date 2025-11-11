@@ -88,10 +88,14 @@
 
 <body>
     <h2>GitHub authentication</h2>
-    <p>This extension requires a GitHub personal access token (PAT). The PAT helps prevent rate limiting and allows the extension to get info from private repos.</p>
-    
+    <p>This extension requires a GitHub personal access token (PAT). The PAT helps prevent rate limiting and allows the
+        extension to get info from private repos.</p>
+
     <div id="token-steps" style="display: block;">
-        <p>Steps:<br/><br/>1. <a href="https://github.com/settings/tokens/new?scopes=repo&description=Preview%20on%20Learn%20extension" target="_blank">Create a new token with 'repo' scope</a>.<br/>2. Copy the token.<br/>3. <a href="https://github.com/settings/tokens" target="_blank">Authorize it for single sign-on (SSO)</a>.</p>
+        <p>Steps:<br /><br />1. <a
+                href="https://github.com/settings/tokens/new?scopes=repo&description=Preview%20on%20Learn%20extension"
+                target="_blank">Create a new token with 'repo' scope</a>.<br />2. Copy the token.<br />3. <a
+                href="https://github.com/settings/tokens" target="_blank">Authorize it for single sign-on (SSO)</a>.</p>
     </div>
 
     <div id="token-status" class="token-status" style="display: none;">
@@ -106,7 +110,7 @@
 
     <div id="status" class="status" style="display: none;"></div>
 
-    <script src="popup.js"></script>
+    <script src="dist/popup.bundle.js"></script>
 </body>
 
 </html>

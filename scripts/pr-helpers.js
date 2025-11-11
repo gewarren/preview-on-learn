@@ -53,7 +53,7 @@ export async function getPrInfo(owner, repo, prNumber) {
 
                 // Clear the invalid token from storage.
                 try {
-                    await chrome.storage.sync.remove(['githubToken']);
+                    await chrome.storage.session.remove(['githubToken']);
                     console.log("Invalid GitHub token has been cleared from storage");
                 } catch (storageError) {
                     console.error("Error clearing invalid token from storage:", storageError);

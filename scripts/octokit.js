@@ -1,4 +1,5 @@
 import { Octokit } from "@octokit/rest";
+import { getGitHubToken } from './auth.js';
 
 // Create a default instance that will be replaced when fully initialized.
 let octokit = new Octokit();
@@ -6,9 +7,8 @@ let octokit = new Octokit();
 // Initialize Octokit, with auth if available.
 export async function initializeOctokit() {
     try {
-        // Get token from Chrome storage.
-        const result = await chrome.storage.sync.get(['githubToken']);
-        const token = result.githubToken;
+        // Get decrypted token.
+        const token = await getGitHubToken();
 
         if (token) {
             console.log("Using authenticated GitHub API");

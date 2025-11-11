@@ -198,7 +198,7 @@ export function setUpTokenObserver(onTokenAdded, onTokenRemoved) {
 
     // Listen for changes to Chrome storage.
     const tokenListener = (changes, namespace) => {
-        if (namespace === 'sync' && changes.githubToken) {
+        if (namespace === 'session' && changes.githubToken) {
             // Token was added.
             if (changes.githubToken.newValue && !changes.githubToken.oldValue) {
                 console.log('GitHub token was added');

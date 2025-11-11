@@ -1,10 +1,14 @@
+import { createTokenHandler } from './token-handler.js';
+
+// Create the appropriate token handler for this context.
+const tokenHandler = createTokenHandler();
+
 // Check if user has entered a GitHub token.
 export async function hasGitHubToken() {
-    try {
-        const result = await chrome.storage.sync.get(['githubToken']);
-        return !!result.githubToken;
-    } catch (error) {
-        console.error("Error checking for GitHub token:", error);
-        return false;
-    }
+    return await tokenHandler.hasGitHubToken();
+}
+
+// Get the decrypted GitHub token.
+export async function getGitHubToken() {
+    return await tokenHandler.getGitHubToken();
 }
