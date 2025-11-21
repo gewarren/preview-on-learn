@@ -50,7 +50,7 @@ class DirectTokenHandler {
 
     async hasGitHubToken() {
         try {
-            const result = await chrome.storage.session.get(['githubToken']);
+            const result = await chrome.storage.sync.get(['githubToken']);
             if (!result.githubToken) {
                 return false;
             }
@@ -62,7 +62,7 @@ class DirectTokenHandler {
             } catch (decryptError) {
                 console.warn('Found invalid encrypted token, clearing it:', decryptError);
                 // Clear the invalid token.
-                await chrome.storage.session.remove('githubToken');
+                await chrome.storage.sync.remove('githubToken');
                 return false;
             }
         } catch (error) {
@@ -73,7 +73,7 @@ class DirectTokenHandler {
 
     async getGitHubToken() {
         try {
-            const result = await chrome.storage.session.get(['githubToken']);
+            const result = await chrome.storage.sync.get(['githubToken']);
             if (!result.githubToken) {
                 return null;
             }
@@ -83,7 +83,7 @@ class DirectTokenHandler {
             } catch (decryptError) {
                 console.warn('Found invalid encrypted token, clearing it:', decryptError);
                 // Clear the invalid token.
-                await chrome.storage.session.remove('githubToken');
+                await chrome.storage.sync.remove('githubToken');
                 return null;
             }
         } catch (error) {
