@@ -11,13 +11,10 @@ const TOKEN_MESSAGES = {
 // Check if we're in a content script context.
 function isContentScript() {
     try {
-        // Content scripts can access chrome.storage.local but not chrome.storage.session.
-        // Also check if we're in a webpage context (content script).
-        return typeof chrome !== 'undefined' &&
-            typeof chrome.runtime !== 'undefined' &&
-            typeof window !== 'undefined' &&
+        // Check if we're in a webpage context (content script) - GitHub domain
+        return typeof window !== 'undefined' &&
             window.location &&
-            window.location.protocol.startsWith('http');
+            window.location.hostname === 'github.com';
     } catch (e) {
         return false;
     }
@@ -50,19 +47,25 @@ class DirectTokenHandler {
 
     async hasGitHubToken() {
         try {
-            const result = await chrome.storage.sync.get(['githubToken']);
+            console.log('DirectTokenHandler: Checking for token in local storage');
+            const result = await chrome.storage.local.get(['githubToken']);
+            console.log('DirectTokenHandler: Storage result:', !!result.githubToken ? 'Token found' : 'No token', result);
+
             if (!result.githubToken) {
+                console.log('DirectTokenHandler: No token in storage');
                 return false;
             }
 
             // Try to decrypt the token to verify it's valid.
             try {
+                console.log('DirectTokenHandler: Attempting to decrypt token');
                 await this.encryption.decryptToken(result.githubToken);
+                console.log('DirectTokenHandler: Token decrypted successfully');
                 return true;
             } catch (decryptError) {
-                console.warn('Found invalid encrypted token, clearing it:', decryptError);
+                console.warn('DirectTokenHandler: Token decryption failed, clearing it:', decryptError);
                 // Clear the invalid token.
-                await chrome.storage.sync.remove('githubToken');
+                await chrome.storage.local.remove('githubToken');
                 return false;
             }
         } catch (error) {
@@ -73,7 +76,7 @@ class DirectTokenHandler {
 
     async getGitHubToken() {
         try {
-            const result = await chrome.storage.sync.get(['githubToken']);
+            const result = await chrome.storage.local.get(['githubToken']);
             if (!result.githubToken) {
                 return null;
             }
@@ -83,7 +86,7 @@ class DirectTokenHandler {
             } catch (decryptError) {
                 console.warn('Found invalid encrypted token, clearing it:', decryptError);
                 // Clear the invalid token.
-                await chrome.storage.sync.remove('githubToken');
+                await chrome.storage.local.remove('githubToken');
                 return null;
             }
         } catch (error) {

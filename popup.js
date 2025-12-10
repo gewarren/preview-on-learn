@@ -15,8 +15,13 @@ document.addEventListener('DOMContentLoaded', async function () {
 
     // Check if a token is already saved.
     try {
+        console.log('Popup: Starting token check...');
+        console.log('Popup: Using token handler:', tokenHandler.constructor.name);
         const hasToken = await tokenHandler.hasGitHubToken();
+        console.log('Popup: Token check result:', hasToken);
+
         if (hasToken) {
+            console.log('Popup: Token found, showing token status');
             // Token exists and is valid - show the token status and hide the form and steps.
             tokenStatusElement.style.display = 'flex';
             tokenFormElement.style.display = 'none';
@@ -46,7 +51,7 @@ document.addEventListener('DOMContentLoaded', async function () {
         try {
             // Encrypt the token before storing
             const encryptedToken = await tokenEncryption.encryptToken(token);
-            await chrome.storage.sync.set({ githubToken: encryptedToken });
+            await chrome.storage.local.set({ githubToken: encryptedToken });
 
             showStatus("Token saved successfully!", "success");
 
@@ -65,7 +70,7 @@ document.addEventListener('DOMContentLoaded', async function () {
     // Clear token when button is clicked.
     clearTokenButton.addEventListener('click', async function () {
         try {
-            await chrome.storage.sync.remove('githubToken');
+            await chrome.storage.local.remove('githubToken');
 
             // Hide the token status and show the form and steps.
             tokenStatusElement.style.display = 'none';
