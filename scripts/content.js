@@ -520,7 +520,7 @@ async function addInitialMenuItems() {
 // Checks if we're specifically on the PR files page.
 function isPrFilesPage() {
   const path = window.location.pathname;
-  return path.includes('/pull/') && path.includes('/files');
+  return path.includes('/pull/') && (path.includes('/files') || path.includes('/changes'));
 }
 
 // Basic init if the user hasn't added a GitHub token.
