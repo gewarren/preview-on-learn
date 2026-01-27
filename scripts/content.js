@@ -50,17 +50,10 @@ function resetSharedButtonState() {
 
 // Checks and updates shared button state.
 // This function should only be called on OPS repos.
+// Now works without a token by using DOM scraping.
 async function checkSharedButtonState() {
   try {
-    // Check if user has a GitHub token first.
-    const hasToken = await hasGitHubToken();
-    if (!hasToken) {
-      sharedButtonState.isDisabled = true;
-      sharedButtonState.disabledReason = INVALID_TOKEN_MESSAGE;
-      return sharedButtonState;
-    }
-
-    // Only check once every 15 seconds to avoid too many API calls.
+    // Only check once every 15 seconds to avoid too many checks.
     const now = Date.now();
     if (now - sharedButtonState.lastCheckTime < 15000) {
       return sharedButtonState;
@@ -136,10 +129,12 @@ async function checkSharedButtonState() {
       );
 
       if (!opsCheck) {
-        console.log("No OPS build check found, disabling buttons");
-        sharedButtonState.isDisabled = true;
-        sharedButtonState.disabledReason = NO_OPS_BUILD_FOUND;
-        sharedButtonState.lastBuildStatus = null;
+        // DOM scraping couldn't find OPS build info - this is OK.
+        // Enable buttons and let getPreviewUrl() construct URLs directly.
+        console.log("No OPS build check found via DOM, will use fallback URL construction");
+        sharedButtonState.isDisabled = false;
+        sharedButtonState.disabledReason = "";
+        sharedButtonState.lastBuildStatus = "unknown";
         return sharedButtonState;
       }
 
@@ -147,14 +142,12 @@ async function checkSharedButtonState() {
       if (opsCheck.status === "pending") {
         sharedButtonState.isDisabled = true;
         sharedButtonState.disabledReason = OPS_BUILD_PENDING;
-      } else if (opsCheck.status !== "success") {
+      } else if (opsCheck.status !== "success" && opsCheck.status !== "unknown") {
         sharedButtonState.isDisabled = true;
         sharedButtonState.disabledReason = OPS_BUILD_FAILED;
-      } else if (!opsCheck.details_url) {
-        sharedButtonState.isDisabled = true;
-        sharedButtonState.disabledReason = NO_OPS_DETAILS_URL;
       } else {
-        // Build was successful.
+        // Build was successful or unknown - enable buttons.
+        // getPreviewUrl() will handle the fallback if needed.
         sharedButtonState.isDisabled = false;
         sharedButtonState.disabledReason = "";
       }
@@ -528,100 +521,34 @@ async function init() {
   // Check if user has a GitHub token.
   const hasToken = await hasGitHubToken();
 
-  if (!hasToken) {
-    console.log("No GitHub token found.");
-
-    let cleanupNoTokenObserver = null;
-    let cleanupNoTokenNavigation = null;
-
-    // Only set up token observer to wait for token to be entered.
-    const cleanupTokenObserver = setUpTokenObserver(
-      async () => {
-        console.log("GitHub token detected, reinitializing extension");
-        // Token was added, reinitialize the extension.
-        await initializeOctokit();
-
-        // Clean up the token-only observer, no-token observer, and navigation listeners.
-        cleanupTokenObserver();
-        if (cleanupNoTokenObserver) {
-          cleanupNoTokenObserver();
-        }
-        if (cleanupNoTokenNavigation) {
-          cleanupNoTokenNavigation();
-        }
-
-        // Remove existing disabled buttons.
-        removeAllButtons();
-
-        await fullInit();
-      },
-      async () => {
-        // Token removal shouldn't happen when we're in no-token mode, but handle it gracefully.
-        console.log("Token was removed while in no-token mode");
-      }
-    );
-
-    // Function to check and add buttons if on PR files page.
-    async function checkAndAddNoTokenButtons() {
-      if (isPrFilesPage()) {
-        const isOps = await isOpsRepo();
-        if (isOps) {
-          // Remove any existing buttons first.
-          removeAllButtons();
-
-          // Add disabled buttons with token message for existing dropdowns.
-          const deleteFileItems = document.querySelectorAll(CSS_SELECTOR);
-          deleteFileItems.forEach(item => {
-            addButton(item, true, INVALID_TOKEN_MESSAGE);
-          });
-
-          // Set up observer for new dropdowns that appear dynamically (if not already set up).
-          if (!cleanupNoTokenObserver) {
-            cleanupNoTokenObserver = setUpNoTokenObserver(addButton, INVALID_TOKEN_MESSAGE);
-          }
-        }
-      } else {
-        // Clean up observer if we're not on files page.
-        if (cleanupNoTokenObserver) {
-          cleanupNoTokenObserver();
-          cleanupNoTokenObserver = null;
-        }
-      }
-    }
-
-    // Check initially.
-    await checkAndAddNoTokenButtons();
-
-    // Set up navigation listeners to detect when user navigates to/from files page.
-    cleanupNoTokenNavigation = setUpNavigationListeners(async () => {
-      // Reset state when navigating
-      resetSharedButtonState();
-      await checkAndAddNoTokenButtons();
-    });
-
-    // Clean up when navigating away.
-    window.addEventListener('beforeunload', () => {
-      cleanupTokenObserver();
-      if (cleanupNoTokenObserver) {
-        cleanupNoTokenObserver();
-      }
-      if (cleanupNoTokenNavigation) {
-        cleanupNoTokenNavigation();
-      }
-    });
-
-    return;
+  if (hasToken) {
+    console.log("GitHub token found, initializing with API support.");
+    // Initialize Octokit with the token.
+    await initializeOctokit();
+  } else {
+    console.log("No GitHub token found, using DOM scraping mode.");
   }
 
-  // User has token, set up full functionality.
+  // Set up token observer to handle token changes.
+  setUpTokenObserver(
+    async () => {
+      console.log("GitHub token detected, reinitializing with API support");
+      await initializeOctokit();
+      // Refresh buttons to potentially get better data
+      updateAllButtons();
+    },
+    async () => {
+      console.log("Token was removed, continuing with DOM scraping mode");
+    }
+  );
+
+  // Run full initialization regardless of token status.
+  // The pr-helpers will use DOM scraping if API calls fail.
   await fullInit();
 }
 
-// Full init with GitHub queries if user has added a GitHub token.
+// Full init - now works with or without a token using DOM scraping fallback.
 async function fullInit() {
-  // Initialize Octokit.
-  await initializeOctokit();
-
   const observers = setUpObservers(updateAllButtons, checkSharedButtonState, addButton, updateButtonState);
 
   if (isPrFilesPage()) {
