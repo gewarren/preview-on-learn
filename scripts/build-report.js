@@ -4,6 +4,8 @@ import { extractRepoInfo, getPrInfo, getSpecificStatusCheck } from './pr-helpers
 const buildReportCache = new Map();
 // Track in-progress requests to prevent duplicate API calls
 const inProgressRequests = new Map();
+// Cache for docset configurations fetched from repos
+const docsetCache = new Map();
 const MAX_CACHE_SIZE = 50;
 
 // Cache cleanup to prevent memory issues
@@ -13,6 +15,161 @@ function cleanUpCache() {
         buildReportCache.delete(oldestKey);
         console.log(`Removed oldest cached entry: ${oldestKey}`);
     }
+}
+
+/**
+ * Fetch the docset base URL from the repo's docfx.json file.
+ * The breadcrumb_path in docfx.json contains the published URL path.
+ * Always fetches from the public repo (without -pr suffix) via raw URLs.
+ * 
+ * @param {string} owner - Repository owner
+ * @param {string} repo - Repository name
+ * @param {string} [filePath] - Optional file path to help locate docfx.json
+ */
+async function fetchDocsetFromConfig(owner, repo, filePath = null) {
+    const cacheKey = `${owner}/${repo}`.toLowerCase();
+
+    // Check cache first
+    if (docsetCache.has(cacheKey)) {
+        return docsetCache.get(cacheKey);
+    }
+
+    // Always use the public repo (without -pr suffix)
+    const publicRepo = repo.replace(/-pr$/i, '');
+
+    // Extract the content folder from the file path if provided
+    // e.g., "aspnetcore/blazor/security/csp.md" -> "aspnetcore"
+    let contentFolder = null;
+    if (filePath) {
+        const pathParts = filePath.split('/');
+        if (pathParts.length >= 2) {
+            contentFolder = pathParts[0];
+        }
+    }
+
+    // Common locations for docfx.json in different repo structures
+    // Try content folder first if available (most specific)
+    const docfxPaths = [];
+    if (contentFolder && contentFolder !== 'docs') {
+        docfxPaths.push(`${contentFolder}/docfx.json`);
+    }
+    docfxPaths.push(
+        'docs/docfx.json',
+        `${publicRepo}/docfx.json`,  // e.g., well-architected/docfx.json
+        'docfx.json',
+    );
+
+    try {
+        // Try raw URLs for the public repo
+        for (const docfxPath of docfxPaths) {
+            const urlsToTry = [
+                `https://raw.githubusercontent.com/${owner}/${publicRepo}/main/${docfxPath}`,
+                `https://raw.githubusercontent.com/${owner}/${publicRepo}/master/${docfxPath}`,
+            ];
+
+            for (const configUrl of urlsToTry) {
+                try {
+                    console.log(`Trying to fetch docfx.json from: ${configUrl}`);
+                    const response = await fetch(configUrl);
+                    if (response.ok) {
+                        const config = await response.json();
+                        const basePath = extractBasePathFromDocfx(config);
+                        if (basePath) {
+                            console.log(`Found docset base path: ${basePath}`);
+                            docsetCache.set(cacheKey, basePath);
+                            return basePath;
+                        }
+                    }
+                } catch (e) {
+                    // Try next URL
+                }
+            }
+        }
+
+        console.log('Could not determine docset path from docfx.json');
+        docsetCache.set(cacheKey, null);
+        return null;
+    } catch (error) {
+        console.log('Error fetching docfx.json:', error.message);
+        docsetCache.set(cacheKey, null);
+        return null;
+    }
+}
+
+/**
+ * Extract the base path from a docfx.json config object.
+ * The breadcrumb_path contains the published URL path, e.g.:
+ * "/azure/cloud-adoption-framework/_bread/toc.json" -> "azure/cloud-adoption-framework"
+ * "/azure/architecture/bread/toc.json" -> "azure/architecture"
+ * "/azure/well-architected/breadcrumb/toc.json" -> "azure/well-architected"
+ */
+function extractBasePathFromDocfx(config) {
+    const breadcrumbPath = config?.build?.globalMetadata?.breadcrumb_path;
+    if (breadcrumbPath) {
+        // Extract the base path by removing the breadcrumb folder and file
+        // Handles "_bread", "bread", and "breadcrumb" folder names
+        const match = breadcrumbPath.match(/^\/(.+?)\/(?:_?breadcrumb?|_?bread)\//);
+        if (match) {
+            return match[1];
+        }
+    }
+    return null;
+}
+
+/**
+ * Construct a preview URL directly from the file path without needing the build report.
+ * This is used as a fallback when the OPS build status check isn't accessible.
+ * 
+ * Pattern: https://review.learn.microsoft.com/en-us/{docset}/{doc-path}?branch=pr-en-us-{pr-number}
+ */
+async function constructPreviewUrl(fileName, prNumber, owner, repo) {
+    // Only works for markdown files
+    if (!fileName.endsWith('.md')) {
+        return null;
+    }
+
+    // Extract the path after the content folder
+    // Common patterns: docs/*, articles/*, content/*, or repo-name-based folders like well-architected/*
+    // The content folder is typically the first directory in the path
+    const pathParts = fileName.split('/');
+    if (pathParts.length < 2) {
+        console.log(`File ${fileName} is not in a content folder`);
+        return null;
+    }
+
+    // The doc path is everything after the first folder (the content folder)
+    let docPath = pathParts.slice(1).join('/');
+
+    // Remove the .md extension
+    docPath = docPath.replace(/\.md$/i, '');
+
+    // Handle "-content" suffix files - these are published without the "-content" in the URL
+    // e.g., "baseline-microsoft-foundry-chat-content.md" -> "baseline-microsoft-foundry-chat"
+    docPath = docPath.replace(/-content$/, '');
+
+    // Handle index files - they typically map to the folder path
+    if (docPath.endsWith('/index') || docPath === 'index') {
+        docPath = docPath.replace(/\/?index$/, '');
+    }
+
+    // Get the docset base path from the repo's OPS config
+    // Pass the fileName so we can try looking in the content folder
+    const docset = await fetchDocsetFromConfig(owner, repo, fileName);
+
+    if (!docset) {
+        // Fallback: use repo name without -pr/-docs suffix
+        const fallbackDocset = repo.toLowerCase().replace(/-pr$/, '').replace(/-docs$/, '');
+        console.log(`No docset config found, using fallback: ${fallbackDocset}`);
+        const previewUrl = `https://review.learn.microsoft.com/en-us/${fallbackDocset}/${docPath}?branch=pr-en-us-${prNumber}`;
+        console.log(`Constructed preview URL (fallback): ${previewUrl}`);
+        return previewUrl;
+    }
+
+    // Construct the preview URL
+    const previewUrl = `https://review.learn.microsoft.com/en-us/${docset}/${docPath}?branch=pr-en-us-${prNumber}`;
+
+    console.log(`Constructed preview URL for ${fileName}: ${previewUrl}`);
+    return previewUrl;
 }
 
 // Gets preview URL for a file from the build report.
@@ -59,8 +216,14 @@ export async function getPreviewUrl(fileName) {
         // Check if there's already a request in progress for this PR
         if (inProgressRequests.has(cacheKey)) {
             console.log(`Waiting for in-progress request for PR #${repoInfo.prNumber}`);
-            const cached = await inProgressRequests.get(cacheKey);
-            return cached.previewLinks[fileName] || null;
+            try {
+                const cached = await inProgressRequests.get(cacheKey);
+                return cached.previewLinks[fileName] || null;
+            } catch (error) {
+                // If the in-progress request failed, try constructing URL directly
+                console.log('In-progress request failed, trying direct URL construction');
+                return await constructPreviewUrl(fileName, repoInfo.prNumber, repoInfo.owner, repoInfo.repo);
+            }
         }
 
         console.log(`Fetching fresh data for PR #${repoInfo.prNumber} commit ${prInfo.commitSha}`);
@@ -73,6 +236,10 @@ export async function getPreviewUrl(fileName) {
             // Wait for the request to complete
             const cached = await requestPromise;
             return cached.previewLinks[fileName] || null;
+        } catch (error) {
+            // If fetching the build report fails, try constructing the URL directly
+            console.log('Build report fetch failed, trying direct URL construction:', error.message);
+            return await constructPreviewUrl(fileName, repoInfo.prNumber, repoInfo.owner, repoInfo.repo);
         } finally {
             // Clean up the in-progress request regardless of success/failure
             inProgressRequests.delete(cacheKey);
@@ -80,6 +247,11 @@ export async function getPreviewUrl(fileName) {
 
     } catch (error) {
         console.error('Error getting preview URL:', error);
+        // Last resort: try to construct URL directly
+        const repoInfo = extractRepoInfo();
+        if (repoInfo) {
+            return await constructPreviewUrl(fileName, repoInfo.prNumber, repoInfo.owner, repoInfo.repo);
+        }
         return null;
     }
 }

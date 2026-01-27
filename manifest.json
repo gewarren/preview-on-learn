@@ -6,12 +6,9 @@
   "permissions": [
     "storage"
   ],
-  "background": {
-    "service_worker": "dist/background.bundle.js"
-  },
   "host_permissions": [
-    "https://api.github.com/*",
     "https://github.com/*",
+    "https://raw.githubusercontent.com/*",
     "https://review.learn.microsoft.com/*"
   ],
   "icons": {
