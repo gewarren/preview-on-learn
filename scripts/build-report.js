@@ -122,6 +122,7 @@ function inferDocsetFromRepoName(repoName) {
         'windowsserverdocs': 'windows-server',
         'memdocs': 'mem',
         'intune-docs': 'intune',
+        'architecture-center': 'azure/architecture',
     };
 
     if (knownPatterns[baseName]) {
@@ -157,6 +158,10 @@ async function constructPreviewUrl(fileName, prNumber, owner, repo) {
 
     // Remove the .md extension
     docPath = docPath.replace(/\.md$/i, '');
+
+    // Handle "-content" suffix files - these are published without the "-content" in the URL
+    // e.g., "baseline-microsoft-foundry-chat-content.md" -> "baseline-microsoft-foundry-chat"
+    docPath = docPath.replace(/-content$/, '');
 
     // Handle index files - they typically map to the folder path
     if (docPath.endsWith('/index') || docPath === 'index') {
