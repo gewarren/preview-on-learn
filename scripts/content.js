@@ -1,12 +1,9 @@
 import { isOpsRepo, isDifferentRepo } from './repo.js';
-import { initializeOctokit } from './octokit.js';
 import { extractRepoInfo, getPrInfo, getSpecificStatusCheck } from './pr-helpers.js';
 import { getPreviewUrl } from './build-report.js';
-import { setUpObservers, setUpNavigationListeners, setUpTokenObserver, setUpNoTokenObserver } from './observers.js';
-import { hasGitHubToken } from './auth.js';
+import { setUpObservers, setUpNavigationListeners } from './observers.js';
 
 export const CSS_SELECTOR = '.js-file-header-dropdown a[aria-label="Delete this file"], .js-file-header-dropdown button[aria-label="You must be signed in and have push access to delete this file."]';
-const INVALID_TOKEN_MESSAGE = "You haven't entered a GitHub token or the token you entered is invalid. Go to Extensions > Preview on Learn and enter a valid PAT. The PAT should have 'repo' scope and be configured for SSO.";
 const NO_PREVIEW_URL = "No preview URL is available for this file";
 const NO_OPS_BUILD_FOUND = "No OPS build status check was found";
 const OPS_BUILD_PENDING = "The OPS build is still in progress";

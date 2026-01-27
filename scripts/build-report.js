@@ -1,5 +1,4 @@
 import { extractRepoInfo, getPrInfo, getSpecificStatusCheck } from './pr-helpers.js';
-import { initializeOctokit } from './octokit.js';
 
 // Cache for build report data - one entry per PR with latest commit
 const buildReportCache = new Map();
@@ -21,6 +20,7 @@ function cleanUpCache() {
 /**
  * Fetch the docset base URL from the repo's docfx.json file.
  * The breadcrumb_path in docfx.json contains the published URL path.
+ * Always fetches from the public repo (without -pr suffix) via raw URLs.
  */
 async function fetchDocsetFromConfig(owner, repo) {
     const cacheKey = `${owner}/${repo}`.toLowerCase();
@@ -30,12 +30,8 @@ async function fetchDocsetFromConfig(owner, repo) {
         return docsetCache.get(cacheKey);
     }
 
-    // If repo name ends with -pr, also try the public repo (without -pr suffix)
+    // Always use the public repo (without -pr suffix)
     const publicRepo = repo.replace(/-pr$/i, '');
-    const reposToTry = [repo];
-    if (publicRepo !== repo) {
-        reposToTry.push(publicRepo);
-    }
 
     // Common locations for docfx.json in different repo structures
     const docfxPaths = [
@@ -45,60 +41,28 @@ async function fetchDocsetFromConfig(owner, repo) {
     ];
 
     try {
-        // First, try using the authenticated GitHub API (works for private repos)
-        const octokit = await initializeOctokit();
-        if (octokit) {
-            for (const repoName of reposToTry) {
-                for (const docfxPath of docfxPaths) {
-                    try {
-                        console.log(`Trying to fetch ${docfxPath} via GitHub API for ${owner}/${repoName}`);
-                        const { data } = await octokit.repos.getContent({
-                            owner,
-                            repo: repoName,
-                            path: docfxPath,
-                        });
+        // Try raw URLs for the public repo
+        for (const docfxPath of docfxPaths) {
+            const urlsToTry = [
+                `https://raw.githubusercontent.com/${owner}/${publicRepo}/main/${docfxPath}`,
+                `https://raw.githubusercontent.com/${owner}/${publicRepo}/master/${docfxPath}`,
+            ];
 
-                        if (data && data.content) {
-                            const configContent = atob(data.content);
-                            const config = JSON.parse(configContent);
-                            const basePath = extractBasePathFromDocfx(config);
-                            if (basePath) {
-                                console.log(`Found docset base path via API: ${basePath}`);
-                                docsetCache.set(cacheKey, basePath);
-                                return basePath;
-                            }
+            for (const configUrl of urlsToTry) {
+                try {
+                    console.log(`Trying to fetch docfx.json from: ${configUrl}`);
+                    const response = await fetch(configUrl);
+                    if (response.ok) {
+                        const config = await response.json();
+                        const basePath = extractBasePathFromDocfx(config);
+                        if (basePath) {
+                            console.log(`Found docset base path: ${basePath}`);
+                            docsetCache.set(cacheKey, basePath);
+                            return basePath;
                         }
-                    } catch (apiError) {
-                        // Try next path
                     }
-                }
-            }
-        }
-
-        // Fallback: Try raw URLs for public repos
-        for (const repoName of reposToTry) {
-            for (const docfxPath of docfxPaths) {
-                const urlsToTry = [
-                    `https://raw.githubusercontent.com/${owner}/${repoName}/main/${docfxPath}`,
-                    `https://raw.githubusercontent.com/${owner}/${repoName}/master/${docfxPath}`,
-                ];
-
-                for (const configUrl of urlsToTry) {
-                    try {
-                        console.log(`Trying to fetch docfx.json from: ${configUrl}`);
-                        const response = await fetch(configUrl);
-                        if (response.ok) {
-                            const config = await response.json();
-                            const basePath = extractBasePathFromDocfx(config);
-                            if (basePath) {
-                                console.log(`Found docset base path: ${basePath}`);
-                                docsetCache.set(cacheKey, basePath);
-                                return basePath;
-                            }
-                        }
-                    } catch (e) {
-                        // Try next URL
-                    }
+                } catch (e) {
+                    // Try next URL
                 }
             }
         }
