@@ -513,39 +513,10 @@ function isPrFilesPage() {
   return path.includes('/pull/') && (path.includes('/files') || path.includes('/changes'));
 }
 
-// Basic init if the user hasn't added a GitHub token.
+// Initialize the extension - no authentication required.
 async function init() {
-  // Check if user has a GitHub token.
-  const hasToken = await hasGitHubToken();
+  console.log("Initializing Preview on Learn extension (no auth required)");
 
-  if (hasToken) {
-    console.log("GitHub token found, initializing with API support.");
-    // Initialize Octokit with the token.
-    await initializeOctokit();
-  } else {
-    console.log("No GitHub token found, using DOM scraping mode.");
-  }
-
-  // Set up token observer to handle token changes.
-  setUpTokenObserver(
-    async () => {
-      console.log("GitHub token detected, reinitializing with API support");
-      await initializeOctokit();
-      // Refresh buttons to potentially get better data
-      updateAllButtons();
-    },
-    async () => {
-      console.log("Token was removed, continuing with DOM scraping mode");
-    }
-  );
-
-  // Run full initialization regardless of token status.
-  // The pr-helpers will use DOM scraping if API calls fail.
-  await fullInit();
-}
-
-// Full init - now works with or without a token using DOM scraping fallback.
-async function fullInit() {
   const observers = setUpObservers(updateAllButtons, checkSharedButtonState, addButton, updateButtonState);
 
   if (isPrFilesPage()) {
@@ -565,44 +536,11 @@ async function fullInit() {
     }
   });
 
-  // Set up token observer to handle token removal,
-  const cleanupTokenObserver = setUpTokenObserver(
-    async () => {
-      // Token was added (shouldn't happen in fullInit, but handle it)
-      console.log("Token was added while extension was running");
-    },
-    async () => {
-      // Token was removed - go back to initial state.
-      console.log("GitHub token was removed, reverting to initial state");
-
-      // Clean up current observers.
-      observers.fileObserver.disconnect();
-      observers.stopInterval();
-      cleanupNavigation();
-
-      // Remove all existing buttons.
-      removeAllButtons();
-
-      // Clear shared state.
-      sharedButtonState.latestCommitSha = null;
-      sharedButtonState.lastBuildStatus = null;
-      sharedButtonState.prStatus = null;
-      sharedButtonState.isDisabled = false;
-      sharedButtonState.disabledReason = "";
-      sharedButtonState.lastCheckTime = 0;
-      sharedButtonState.previewUrlsFetched = false; // Reset preview URLs fetched flag
-
-      // Reinitialize in no-token mode.
-      await init();
-    }
-  );
-
   // Clean up when navigating away.
   window.addEventListener('beforeunload', () => {
     observers.fileObserver.disconnect();
     observers.stopInterval();
     cleanupNavigation();
-    cleanupTokenObserver();
   });
 }
 

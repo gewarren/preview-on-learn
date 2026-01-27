@@ -8,8 +8,7 @@ export default {
     entry: {
         content: './scripts/content.js',
         'dismiss-banner': './scripts/dismiss-banner.js',
-        popup: './popup.js',
-        background: './background.js'
+        popup: './popup.js'
     },
     output: {
         filename: '[name].bundle.js',
