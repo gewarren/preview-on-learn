@@ -1,4 +1,5 @@
 import { extractRepoInfo, getPrInfo, getSpecificStatusCheck } from './pr-helpers.js';
+import { initializeOctokit } from './octokit.js';
 
 // Cache for build report data - one entry per PR with latest commit
 const buildReportCache = new Map();
@@ -18,8 +19,8 @@ function cleanUpCache() {
 }
 
 /**
- * Fetch the docset base URL from the repo's .openpublishing.publish.config.json file.
- * This file contains the actual docset configuration used by OPS.
+ * Fetch the docset base URL from the repo's docfx.json file.
+ * The breadcrumb_path in docfx.json contains the published URL path.
  */
 async function fetchDocsetFromConfig(owner, repo) {
     const cacheKey = `${owner}/${repo}`.toLowerCase();
@@ -29,109 +30,107 @@ async function fetchDocsetFromConfig(owner, repo) {
         return docsetCache.get(cacheKey);
     }
 
-    try {
-        // Try multiple URL patterns to fetch the OPS config file
-        // For private repos, raw.githubusercontent.com won't work, but the GitHub blob page might
-        const urlsToTry = [
-            // Public repos - raw content
-            `https://raw.githubusercontent.com/${owner}/${repo}/main/.openpublishing.publish.config.json`,
-            // Try master branch too
-            `https://raw.githubusercontent.com/${owner}/${repo}/master/.openpublishing.publish.config.json`,
-        ];
+    // If repo name ends with -pr, also try the public repo (without -pr suffix)
+    const publicRepo = repo.replace(/-pr$/i, '');
+    const reposToTry = [repo];
+    if (publicRepo !== repo) {
+        reposToTry.push(publicRepo);
+    }
 
-        for (const configUrl of urlsToTry) {
-            try {
-                console.log(`Trying to fetch OPS config from: ${configUrl}`);
-                const response = await fetch(configUrl);
-                if (response.ok) {
-                    const config = await response.json();
-                    const basePath = extractBasePathFromConfig(config);
-                    if (basePath) {
-                        console.log(`Found docset base path: ${basePath}`);
-                        docsetCache.set(cacheKey, basePath);
-                        return basePath;
+    // Common locations for docfx.json in different repo structures
+    const docfxPaths = [
+        'docs/docfx.json',
+        `${publicRepo}/docfx.json`,  // e.g., well-architected/docfx.json
+        'docfx.json',
+    ];
+
+    try {
+        // First, try using the authenticated GitHub API (works for private repos)
+        const octokit = await initializeOctokit();
+        if (octokit) {
+            for (const repoName of reposToTry) {
+                for (const docfxPath of docfxPaths) {
+                    try {
+                        console.log(`Trying to fetch ${docfxPath} via GitHub API for ${owner}/${repoName}`);
+                        const { data } = await octokit.repos.getContent({
+                            owner,
+                            repo: repoName,
+                            path: docfxPath,
+                        });
+
+                        if (data && data.content) {
+                            const configContent = atob(data.content);
+                            const config = JSON.parse(configContent);
+                            const basePath = extractBasePathFromDocfx(config);
+                            if (basePath) {
+                                console.log(`Found docset base path via API: ${basePath}`);
+                                docsetCache.set(cacheKey, basePath);
+                                return basePath;
+                            }
+                        }
+                    } catch (apiError) {
+                        // Try next path
                     }
                 }
-            } catch (e) {
-                // Try next URL
             }
         }
 
-        // If raw URLs fail (private repo), fall back to a heuristic based on repo name
-        // MicrosoftDocs repos typically follow patterns like:
-        // - azure-docs-pr -> azure
-        // - cloud-adoption-framework-pr -> azure/cloud-adoption-framework
-        const basePath = inferDocsetFromRepoName(repo);
-        if (basePath) {
-            console.log(`Inferred docset base path from repo name: ${basePath}`);
-            docsetCache.set(cacheKey, basePath);
-            return basePath;
+        // Fallback: Try raw URLs for public repos
+        for (const repoName of reposToTry) {
+            for (const docfxPath of docfxPaths) {
+                const urlsToTry = [
+                    `https://raw.githubusercontent.com/${owner}/${repoName}/main/${docfxPath}`,
+                    `https://raw.githubusercontent.com/${owner}/${repoName}/master/${docfxPath}`,
+                ];
+
+                for (const configUrl of urlsToTry) {
+                    try {
+                        console.log(`Trying to fetch docfx.json from: ${configUrl}`);
+                        const response = await fetch(configUrl);
+                        if (response.ok) {
+                            const config = await response.json();
+                            const basePath = extractBasePathFromDocfx(config);
+                            if (basePath) {
+                                console.log(`Found docset base path: ${basePath}`);
+                                docsetCache.set(cacheKey, basePath);
+                                return basePath;
+                            }
+                        }
+                    } catch (e) {
+                        // Try next URL
+                    }
+                }
+            }
         }
 
-        console.log('Could not determine docset path');
+        console.log('Could not determine docset path from docfx.json');
         docsetCache.set(cacheKey, null);
         return null;
     } catch (error) {
-        console.log('Error fetching OPS config:', error.message);
+        console.log('Error fetching docfx.json:', error.message);
         docsetCache.set(cacheKey, null);
         return null;
     }
 }
 
 /**
- * Extract the base path from an OPS config object
+ * Extract the base path from a docfx.json config object.
+ * The breadcrumb_path contains the published URL path, e.g.:
+ * "/azure/cloud-adoption-framework/_bread/toc.json" -> "azure/cloud-adoption-framework"
+ * "/azure/architecture/bread/toc.json" -> "azure/architecture"
+ * "/azure/well-architected/breadcrumb/toc.json" -> "azure/well-architected"
  */
-function extractBasePathFromConfig(config) {
-    if (config.docsets_to_publish && config.docsets_to_publish.length > 0) {
-        const docset = config.docsets_to_publish[0];
-
-        // Check for explicit base_path fields
-        let basePath = docset.base_path || docset.site_base_path || null;
-
-        if (!basePath && docset.docset_name) {
-            // Derive from docset_name - replace first hyphen with slash
-            // e.g., "azure-cloud-adoption-framework" -> "azure/cloud-adoption-framework"
-            basePath = docset.docset_name.replace(/-/, '/');
-        }
-
-        if (basePath) {
-            return basePath.replace(/^\//, '');
+function extractBasePathFromDocfx(config) {
+    const breadcrumbPath = config?.build?.globalMetadata?.breadcrumb_path;
+    if (breadcrumbPath) {
+        // Extract the base path by removing the breadcrumb folder and file
+        // Handles "_bread", "bread", and "breadcrumb" folder names
+        const match = breadcrumbPath.match(/^\/(.+?)\/(?:_?breadcrumb?|_?bread)\//);
+        if (match) {
+            return match[1];
         }
     }
     return null;
-}
-
-/**
- * Infer the docset base path from the repo name using common patterns
- */
-function inferDocsetFromRepoName(repoName) {
-    const name = repoName.toLowerCase();
-
-    // Remove common suffixes
-    let baseName = name.replace(/-pr$/, '').replace(/-docs$/, '');
-
-    // Known patterns for MicrosoftDocs repos
-    // These repos have docset paths that don't match their repo names
-    const knownPatterns = {
-        'cloud-adoption-framework': 'azure/cloud-adoption-framework',
-        'azure-docs': 'azure',
-        'azure-stack-docs': 'azure-stack',
-        'entra-docs': 'entra',
-        'sql-docs': 'sql',
-        'powershell-docs': 'powershell',
-        'windowsserverdocs': 'windows-server',
-        'memdocs': 'mem',
-        'intune-docs': 'intune',
-        'architecture-center': 'azure/architecture',
-    };
-
-    if (knownPatterns[baseName]) {
-        return knownPatterns[baseName];
-    }
-
-    // For other repos, try the base name directly
-    // This works for many repos where the docset matches the repo name
-    return baseName;
 }
 
 /**
@@ -141,20 +140,22 @@ function inferDocsetFromRepoName(repoName) {
  * Pattern: https://review.learn.microsoft.com/en-us/{docset}/{doc-path}?branch=pr-en-us-{pr-number}
  */
 async function constructPreviewUrl(fileName, prNumber, owner, repo) {
-    // Only works for markdown files in docs folders
+    // Only works for markdown files
     if (!fileName.endsWith('.md')) {
         return null;
     }
 
-    // Extract the path after 'docs/' or similar content folder
-    // Common patterns: docs/*, articles/*, content/*
-    const contentFolderMatch = fileName.match(/^(?:docs|articles|content)\/(.+)$/i);
-    if (!contentFolderMatch) {
-        console.log(`File ${fileName} is not in a recognized content folder`);
+    // Extract the path after the content folder
+    // Common patterns: docs/*, articles/*, content/*, or repo-name-based folders like well-architected/*
+    // The content folder is typically the first directory in the path
+    const pathParts = fileName.split('/');
+    if (pathParts.length < 2) {
+        console.log(`File ${fileName} is not in a content folder`);
         return null;
     }
 
-    let docPath = contentFolderMatch[1];
+    // The doc path is everything after the first folder (the content folder)
+    let docPath = pathParts.slice(1).join('/');
 
     // Remove the .md extension
     docPath = docPath.replace(/\.md$/i, '');
