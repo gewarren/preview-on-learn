@@ -21,8 +21,12 @@ function cleanUpCache() {
  * Fetch the docset base URL from the repo's docfx.json file.
  * The breadcrumb_path in docfx.json contains the published URL path.
  * Always fetches from the public repo (without -pr suffix) via raw URLs.
+ * 
+ * @param {string} owner - Repository owner
+ * @param {string} repo - Repository name
+ * @param {string} [filePath] - Optional file path to help locate docfx.json
  */
-async function fetchDocsetFromConfig(owner, repo) {
+async function fetchDocsetFromConfig(owner, repo, filePath = null) {
     const cacheKey = `${owner}/${repo}`.toLowerCase();
 
     // Check cache first
@@ -33,12 +37,27 @@ async function fetchDocsetFromConfig(owner, repo) {
     // Always use the public repo (without -pr suffix)
     const publicRepo = repo.replace(/-pr$/i, '');
 
+    // Extract the content folder from the file path if provided
+    // e.g., "aspnetcore/blazor/security/csp.md" -> "aspnetcore"
+    let contentFolder = null;
+    if (filePath) {
+        const pathParts = filePath.split('/');
+        if (pathParts.length >= 2) {
+            contentFolder = pathParts[0];
+        }
+    }
+
     // Common locations for docfx.json in different repo structures
-    const docfxPaths = [
+    // Try content folder first if available (most specific)
+    const docfxPaths = [];
+    if (contentFolder && contentFolder !== 'docs') {
+        docfxPaths.push(`${contentFolder}/docfx.json`);
+    }
+    docfxPaths.push(
         'docs/docfx.json',
         `${publicRepo}/docfx.json`,  // e.g., well-architected/docfx.json
         'docfx.json',
-    ];
+    );
 
     try {
         // Try raw URLs for the public repo
@@ -134,7 +153,8 @@ async function constructPreviewUrl(fileName, prNumber, owner, repo) {
     }
 
     // Get the docset base path from the repo's OPS config
-    const docset = await fetchDocsetFromConfig(owner, repo);
+    // Pass the fileName so we can try looking in the content folder
+    const docset = await fetchDocsetFromConfig(owner, repo, fileName);
 
     if (!docset) {
         // Fallback: use repo name without -pr/-docs suffix
