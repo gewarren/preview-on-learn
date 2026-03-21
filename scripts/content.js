@@ -5,7 +5,7 @@ import { getPreviewUrl } from './build-report.js';
 import { setUpObservers, setUpNavigationListeners, setUpTokenObserver, setUpNoTokenObserver } from './observers.js';
 import { hasGitHubToken } from './auth.js';
 
-export const CSS_SELECTOR = '.js-file-header-dropdown a[aria-label="Delete this file"], .js-file-header-dropdown button[aria-label="You must be signed in and have push access to delete this file."]';
+export const CSS_SELECTOR = '.js-file-header-dropdown a[aria-label="Delete this file"], .js-file-header-dropdown button[aria-label="You must be signed in and have push access to delete this file."], li[data-variant="danger"] > a[role="menuitem"][aria-keyshortcuts="d"]';
 const INVALID_TOKEN_MESSAGE = "You haven't entered a GitHub token or the token you entered is invalid. Go to Extensions > Preview on Learn and enter a valid PAT. The PAT should have 'repo' scope and be configured for SSO.";
 const NO_PREVIEW_URL = "No preview URL is available for this file";
 const NO_OPS_BUILD_FOUND = "No OPS build status check was found";
@@ -17,12 +17,103 @@ const NO_OPS_DETAILS_URL = "The OPS details URL isn't available";
 function removeAllButtons() {
   const existingButtons = document.querySelectorAll('.preview-on-learn');
   existingButtons.forEach(button => {
+    // New UI: button <a> is inside a wrapper <li>, with a divider <li> before it.
+    const parentLi = button.parentElement;
+    if (parentLi && parentLi.tagName === 'LI' && parentLi.getAttribute('role') === 'none') {
+      const liDivider = parentLi.previousElementSibling;
+      if (liDivider && liDivider.tagName === 'LI' && liDivider.getAttribute('aria-hidden') === 'true') {
+        liDivider.remove();
+      }
+      parentLi.remove();
+      return;
+    }
+
+    // Old UI: divider is the previous sibling <div>.
     const divider = button.previousElementSibling;
     if (divider && divider.classList.contains('dropdown-divider')) {
       divider.remove();
     }
     button.remove();
   });
+}
+
+// Helper to find the file path element, handling both old and new GitHub UI.
+// In the new UI, the action menu may be in a portal outside the file header,
+// so we trace back via the menu's aria-labelledby to find the trigger button's container.
+function getFilePathElement(element) {
+  const directPath = element.closest('[data-path]');
+  if (directPath) return directPath;
+
+  const menu = element.closest('ul[role="menu"]');
+  if (menu) {
+    const triggerId = menu.getAttribute('aria-labelledby');
+    if (triggerId) {
+      const triggerElement = document.getElementById(triggerId);
+      if (triggerElement) {
+        return triggerElement.closest('[data-path]');
+      }
+    }
+  }
+
+  return null;
+}
+
+// Helper to extract the file name from the menu's "View file" blob link.
+// Used as a fallback when getFilePathElement can't find the [data-path] container
+// (e.g. when the menu is rendered in a React portal in the new GitHub UI).
+function getFileNameFromMenu(element) {
+  const menu = element.closest('ul[role="menu"]');
+  if (!menu) return null;
+
+  // Look for the "View file" link which has a blob URL like:
+  // /owner/repo/blob/{sha}/path/to/file.md
+  const blobLink = menu.querySelector('a[href*="/blob/"]');
+  if (blobLink) {
+    const href = blobLink.getAttribute('href');
+    const blobMatch = href.match(/\/blob\/[a-f0-9]+\/(.+)$/);
+    if (blobMatch) {
+      return blobMatch[1];
+    }
+  }
+
+  // Fallback: look for the delete link and extract path from it.
+  // href like /owner/repo/delete/branch/path/to/file.md
+  const deleteLink = menu.querySelector('li[data-variant="danger"] > a[href*="/delete/"]');
+  if (deleteLink) {
+    const href = deleteLink.getAttribute('href');
+    const deleteMatch = href.match(/\/delete\/[^/]+\/(.+)$/);
+    if (deleteMatch) {
+      return deleteMatch[1];
+    }
+  }
+
+  return null;
+}
+
+// Helper to extract the file name for a given element, trying multiple strategies.
+function getFileName(element) {
+  // Strategy 1: Find [data-path] container and extract from it.
+  const filePathElement = getFilePathElement(element);
+  if (filePathElement) {
+    const linkElement = filePathElement.querySelector(".Link--primary");
+    const fullText = linkElement?.textContent;
+
+    // Try to extract filename from text content first (handles renames with "old \u2192 new").
+    let fileName = fullText?.split(" \u2192 ").pop();
+
+    // If filename is invalid or looks truncated, use data-path.
+    if (!fileName || fileName.includes('\u2026') || fileName.startsWith('...')) {
+      const dataPath = filePathElement.getAttribute('data-path');
+      if (dataPath) {
+        fileName = dataPath;
+      }
+    }
+
+    if (fileName) return fileName;
+  }
+
+  // Strategy 2: Extract from menu links (new UI fallback).
+  return getFileNameFromMenu(element);
 }
 
 // Shared state for button conditions.
@@ -309,24 +400,10 @@ async function updateButtonState(button, state) {
   }
 
   // Button should be enabled, try to get/update preview URL.
-  const filePathElement = button.closest('[data-path]');
-  if (filePathElement) {
-    const linkElement = filePathElement.querySelector(".Link--primary");
-    const fullText = linkElement?.textContent;
+  const fileName = getFileName(button);
 
-    // Try to extract filename from text content first
-    // (handles renames with "old → new").
-    let fileName = fullText?.split(" → ").pop();
-
-    // If filename is invalid or looks truncated, use data-path.
-    if (!fileName || fileName.includes('…') || fileName.startsWith('...')) {
-      const dataPath = filePathElement.getAttribute('data-path');
-      if (dataPath) {
-        fileName = dataPath;
-      }
-    }
-
-    if (fileName) {
+  if (fileName) {
+    {
       // Optimization: Only fetch preview URL if we don't have one yet OR commit SHA has changed.
       const needsFetch = !button.href || !sharedButtonState.previewUrlsFetched;
 
@@ -400,31 +477,124 @@ async function updateAllButtons() {
 
 function addButton(showCommentsMenuItem, isDisabled = false, disabledReason = "") {
   try {
-    // Check if a button already exists in this dropdown.
-    const dropdown = showCommentsMenuItem.closest('.js-file-header-dropdown');
-    if (dropdown && dropdown.querySelector('.preview-on-learn')) {
+    // Detect which GitHub UI we're in.
+    const isNewUI = !showCommentsMenuItem.closest('.js-file-header-dropdown');
+    const container = isNewUI
+      ? showCommentsMenuItem.closest('ul[role="menu"]')
+      : showCommentsMenuItem.closest('.js-file-header-dropdown');
+
+    // Check if a button already exists in this dropdown/menu.
+    if (container && container.querySelector('.preview-on-learn')) {
       return;
     }
 
-    // Create and add divider.
-    let divider = document.createElement("div");
-    divider.className = "dropdown-divider";
-    divider.setAttribute("role", "none");
-    showCommentsMenuItem.after(divider);
+    let button;
 
-    // Create new button.
-    let button = document.createElement("a");
+    if (isNewUI) {
+      // New GitHub UI: Create ActionList-style menu item.
+      const deleteListItem = showCommentsMenuItem.closest('li');
 
-    // Set attributes and properties.
-    button.className = "pl-5 dropdown-item btn-link preview-on-learn";
-    button.setAttribute("role", "menuitem");
-    button.textContent = "Preview on Learn";
+      // Create divider <li>.
+      // The parent <ul> has data-dividers="false" which hides ActionList dividers via CSS,
+      // so we use an inline border style to ensure visibility.
+      const divider = document.createElement("li");
+      divider.setAttribute("aria-hidden", "true");
+      divider.style.listStyle = "none";
+      divider.style.borderTop = "1px solid var(--borderColor-muted, var(--color-action-list-item-inline-divider))";
+      divider.style.marginTop = "4px";
+      divider.style.marginBottom = "4px";
+
+      // Create wrapper <li>.
+      const listItem = document.createElement("li");
+      listItem.setAttribute("role", "none");
+      listItem.setAttribute("data-has-description", "false");
+      const existingLi = container?.querySelector('li[role="none"]');
+      if (existingLi) {
+        listItem.className = existingLi.className;
+      }
+
+      // Create button <a>.
+      button = document.createElement("a");
+      button.setAttribute("tabindex", "-1");
+      button.setAttribute("role", "menuitem");
+      button.setAttribute("data-size", "medium");
+      const existingLink = container?.querySelector('li[role="none"] > a[role="menuitem"]');
+      if (existingLink) {
+        button.className = [...existingLink.classList].join(' ');
+      }
+      button.classList.add('preview-on-learn');
+
+      // Build inner label structure matching GitHub's ActionList pattern.
+      const spacerSpan = document.createElement("span");
+      const existingSpacer = container?.querySelector('li[role="none"] > a > span[class*="Spacer"]');
+      if (existingSpacer) {
+        spacerSpan.className = existingSpacer.className;
+      }
+
+      // Add leading visual icon (link-external).
+      const leadingVisual = document.createElement("span");
+      const existingVisual = container?.querySelector('li[role="none"] .prc-ActionList-LeadingVisual-NBr28, li[role="none"] span[class*="LeadingVisual"]');
+      if (existingVisual) {
+        leadingVisual.className = existingVisual.className;
+      }
+      const iconSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      iconSvg.setAttribute("aria-hidden", "true");
+      iconSvg.setAttribute("focusable", "false");
+      iconSvg.setAttribute("viewBox", "0 0 16 16");
+      iconSvg.setAttribute("width", "16");
+      iconSvg.setAttribute("height", "16");
+      iconSvg.setAttribute("fill", "currentColor");
+      iconSvg.setAttribute("display", "inline-block");
+      iconSvg.setAttribute("overflow", "visible");
+      iconSvg.style.verticalAlign = "text-bottom";
+      const iconPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      iconPath.setAttribute("d", "M3.75 2h3.5a.75.75 0 0 1 0 1.5h-3.5a.25.25 0 0 0-.25.25v8.5c0 .138.112.25.25.25h8.5a.25.25 0 0 0 .25-.25v-3.5a.75.75 0 0 1 1.5 0v3.5A1.75 1.75 0 0 1 12.25 14h-8.5A1.75 1.75 0 0 1 2 12.25v-8.5C2 2.784 2.784 2 3.75 2Zm6.854-1h4.146a.25.25 0 0 1 .25.25v4.146a.25.25 0 0 1-.427.177L13.03 4.03 9.28 7.78a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042l3.75-3.75-1.543-1.543A.25.25 0 0 1 10.604 1Z");
+      iconSvg.appendChild(iconPath);
+      leadingVisual.appendChild(iconSvg);
+
+      const subContentSpan = document.createElement("span");
+      subContentSpan.setAttribute("data-component", "ActionList.Item--DividerContainer");
+      const existingSubContent = container?.querySelector('[data-component="ActionList.Item--DividerContainer"]');
+      if (existingSubContent) {
+        subContentSpan.className = existingSubContent.className;
+      }
+
+      const labelSpan = document.createElement("span");
+      const existingLabel = container?.querySelector('span[id$="--label"]');
+      if (existingLabel) {
+        labelSpan.className = existingLabel.className;
+      }
+      labelSpan.textContent = "Preview on Learn";
+
+      subContentSpan.appendChild(labelSpan);
+      button.appendChild(spacerSpan);
+      button.appendChild(leadingVisual);
+      button.appendChild(subContentSpan);
+      listItem.appendChild(button);
+
+      // Insert after delete file list item.
+      deleteListItem.after(divider);
+      divider.after(listItem);
+    } else {
+      // Old GitHub UI: Create old-style dropdown menu item.
+      const divider = document.createElement("div");
+      divider.className = "dropdown-divider";
+      divider.setAttribute("role", "none");
+      showCommentsMenuItem.after(divider);
+
+      button = document.createElement("a");
+      button.className = "pl-5 dropdown-item btn-link preview-on-learn";
+      button.setAttribute("role", "menuitem");
+      button.textContent = "Preview on Learn";
+
+      // Add new button to menu below divider.
+      divider.after(button);
+    }
 
     // If disabled, add appropriate styling and attributes.
     if (isDisabled) {
       button.classList.add('disabled');
       button.setAttribute('aria-disabled', 'true');
-      // Don't set href at all for disabled buttons...
 
       // Add tooltip with reason.
       if (disabledReason) {
@@ -432,38 +602,23 @@ function addButton(showCommentsMenuItem, isDisabled = false, disabledReason = ""
       }
     } else {
       // Get and store the preview URL.
-      const filePathElement = showCommentsMenuItem.closest('[data-path]');
-      if (filePathElement) {
-        const linkElement = filePathElement.querySelector(".Link--primary");
-        const fullText = linkElement?.textContent;
-
-        // Try to extract filename from text content first (handles renames with "old → new").
-        let fileName = fullText?.split(" → ").pop();
-
-        // If filename is invalid or looks truncated, use data-path.
-        if (!fileName || fileName.includes('…') || fileName.startsWith('...')) {
-          const dataPath = filePathElement.getAttribute('data-path');
-          if (dataPath) {
-            fileName = dataPath;
+      const fileName = getFileName(showCommentsMenuItem);
+      if (fileName) {
+        getPreviewUrl(fileName).then(previewUrl => {
+          if (previewUrl && !button.classList.contains('disabled')) {
+            button.href = previewUrl;
           }
-        }
-
-        if (fileName) {
-          getPreviewUrl(fileName).then(previewUrl => {
-            if (previewUrl && !button.classList.contains('disabled')) {
-              button.href = previewUrl;
-            }
-          }).catch((error) => {
-            console.warn("Error while getting preview URL:", error);
-          });
-        }
+        }).catch((error) => {
+          console.warn("Error while getting preview URL:", error);
+        });
       }
     }
 
     // Add event listener to ALL buttons (enabled or disabled).
-    button.addEventListener('click', function (event) {
+    const handleClick = function (event) {
       event.preventDefault();
       event.stopPropagation();
+      event.stopImmediatePropagation();
 
       // Don't open if disabled
       if (button.classList.contains('disabled')) {
@@ -471,18 +626,29 @@ function addButton(showCommentsMenuItem, isDisabled = false, disabledReason = ""
       }
 
       if (button.href) {
-        // Close the dropdown menu before opening the link.
-        const dropdown = button.closest('.js-file-header-dropdown');
-        if (dropdown) {
-          dropdown.open = false;
+        // Close the dropdown/menu before opening the link.
+        if (isNewUI) {
+          button.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        } else {
+          const dropdown = button.closest('.js-file-header-dropdown');
+          if (dropdown) {
+            dropdown.open = false;
+          }
         }
 
         window.open(button.href, '_blank');
       }
-    }, { capture: true });
+    };
 
-    // Add new button to menu below divider.
-    divider.after(button);
+    button.addEventListener('click', handleClick, { capture: true });
+
+    // In the new UI, the parent <li> may intercept events before they reach the <a>.
+    if (isNewUI) {
+      const parentLi = button.closest('li');
+      if (parentLi) {
+        parentLi.addEventListener('click', handleClick, { capture: true });
+      }
+    }
 
     console.log(`Successfully added preview button${isDisabled ? " (disabled)" : ""}`);
   } catch (error) {
@@ -520,7 +686,11 @@ async function addInitialMenuItems() {
 // Checks if we're specifically on the PR files page.
 function isPrFilesPage() {
   const path = window.location.pathname;
-  return path.includes('/pull/') && path.includes('/files');
+  if (!path.includes('/pull/')) return false;
+
+  // Old UI: /pull/N/files
+  // New UI: /pull/N/changes
+  return path.includes('/files') || path.includes('/changes');
 }
 
 // Basic init if the user hasn't added a GitHub token.
