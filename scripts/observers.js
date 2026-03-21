@@ -75,10 +75,20 @@ export function setUpObservers(updateAllButtons, checkButtonState, addButton, up
                     continue;
                 }
 
-                // Check if a dropdown menu was added.
-                const dropdowns = node.classList?.contains('js-file-header-dropdown')
+                // Check if a dropdown menu was added (old or new GitHub UI).
+                let dropdowns = node.classList?.contains('js-file-header-dropdown')
                     ? [node]
                     : [...node.querySelectorAll('.js-file-header-dropdown')];
+
+                // Also detect new GitHub UI action menus.
+                if (dropdowns.length === 0) {
+                    const newUIMenus = node.matches?.('ul[role="menu"]')
+                        ? [node]
+                        : [...node.querySelectorAll('ul[role="menu"]')];
+                    if (newUIMenus.length > 0) {
+                        dropdowns = newUIMenus;
+                    }
+                }
 
                 if (dropdowns.length > 0) {
                     console.log('Detected new file dropdown(s):', dropdowns.length);
@@ -92,6 +102,10 @@ export function setUpObservers(updateAllButtons, checkButtonState, addButton, up
 
                     // Get current button state once for all dropdowns.
                     const state = await checkButtonState();
+                    if (!state) {
+                        console.log('Could not get button state, skipping');
+                        return;
+                    }
 
                     // Find menu items in each dropdown that we want to add our button after.
                     for (const dropdown of dropdowns) {
@@ -232,10 +246,20 @@ export function setUpNoTokenObserver(addButton, invalidTokenMessage) {
                     continue;
                 }
 
-                // Check if a dropdown menu was added.
-                const dropdowns = node.classList?.contains('js-file-header-dropdown')
+                // Check if a dropdown menu was added (old or new GitHub UI).
+                let dropdowns = node.classList?.contains('js-file-header-dropdown')
                     ? [node]
                     : [...node.querySelectorAll('.js-file-header-dropdown')];
+
+                // Also detect new GitHub UI action menus.
+                if (dropdowns.length === 0) {
+                    const newUIMenus = node.matches?.('ul[role="menu"]')
+                        ? [node]
+                        : [...node.querySelectorAll('ul[role="menu"]')];
+                    if (newUIMenus.length > 0) {
+                        dropdowns = newUIMenus;
+                    }
+                }
 
                 if (dropdowns.length > 0) {
                     // Check if this is an OPS repo first.
